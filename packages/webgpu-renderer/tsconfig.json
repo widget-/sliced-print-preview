@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "types": ["vite/client", "@webgpu/types"],
+    "paths": {
+      "@sliced/shared": ["../shared/src"],
+      "@sliced/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["src"]
+}
