@@ -43,6 +43,7 @@
     <div class="viewer">
       <ModelViewer
         :segbinUrl="segbinUrl"
+        :rendererType="rendererType"
         :roughness="roughness"
         :metalness="metalness"
         :envIntensity="envIntensity"
@@ -59,7 +60,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onBeforeUnmount } from 'vue';
+import { ref, computed, onBeforeUnmount } from 'vue';
 import ModelViewer from './components/ModelViewer.vue';
 
 const loading = ref(false);
@@ -73,6 +74,11 @@ const envIntensity = ref(0.25);
 const specularStrength = ref(1.0);
 const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');
+
+// Feature-detect WebGPU
+const webgpuAvailable = typeof navigator !== 'undefined' && typeof (navigator as any).gpu !== 'undefined';
+const rendererType = computed(() => webgpuAvailable ? 'webgpu' : 'webgl2');
+log(`Renderer: ${rendererType.value}${webgpuAvailable ? '' : ' (WebGPU not available)'}`);
 
 function fmt(ms: number | undefined): string {
   if (ms === undefined || ms === null) return '-';

@@ -32,6 +32,7 @@ const canvasEl = ref<HTMLCanvasElement>();
 
 const props = withDefaults(defineProps<{
   segbinUrl: string | null;
+  rendererType?: 'webgl2' | 'webgpu';
   roughness?: number;
   metalness?: number;
   envIntensity?: number;
@@ -39,6 +40,7 @@ const props = withDefaults(defineProps<{
   ambientStrength?: number;
   baseColorTint?: string;
 }>(), {
+  rendererType: 'webgl2',
   roughness: 0.10,
   metalness: 0.0,
   envIntensity: 0.25,
