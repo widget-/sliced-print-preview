@@ -1,9 +1,11 @@
 import express from 'express';
 import multer from 'multer';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdirSync, existsSync, renameSync, readFileSync, writeFileSync, statSync, readdirSync, realpathSync } from 'node:fs';
-import { join, normalize, dirname } from 'node:path';
+import { mkdirSync, existsSync, renameSync, statSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { resolveOrcaSlicerBin, resolveOrcaResourcesDir } from './orca';
+import { parseG2sTiming } from './timing';
 
 // --- Timestamped logging ---
 function log(msg: string) {
@@ -41,39 +43,6 @@ interface PipelineParams {
   outputDir: string;
   cfg: typeof config;
   logPrefix: string;
-}
-
-/** Convert Rust Duration Debug (e.g. "1s", "185ms", "902µs") → ms. */
-function parseDur(s: string): number | undefined {
-  const m = s.match(/^([\d.]+)(s|ms|µs)$/);
-  if (!m) return undefined;
-  const v = parseFloat(m[1]!);
-  if (m[2] === 's') return v * 1000;
-  if (m[2] === 'ms') return v;
-  return v * 0.001; // µs
-}
-
-/** Parse gcode-to-segbin stderr into structured timing. */
-function parseG2sTiming(stderr: string): Record<string, number> {
-  const t: Record<string, number> = {};
-  const m1 = stderr.match(/Parsed .+ \([\d.]+ merged, ([\d.]+)ms\)/);
-  if (m1) t.parse = parseFloat(m1[1]!);
-
-  const m2 = stderr.match(/Ray cull: (\d+) rays, .+ culled \(ray=([^,]+), seg_bvh=([^,]+), gap=([^)]+)\)/);
-  if (m2) {
-    t.rays = parseInt(m2[1]!);
-    const r = parseDur(m2[2]!); if (r !== undefined) t.ray = r;
-    const s = parseDur(m2[3]!); if (s !== undefined) t.segBvh = s;
-    const g = parseDur(m2[4]!); if (g !== undefined) t.gap = g;
-  }
-
-  const m3 = stderr.match(/Arc subdivision: .+ \(([^)]+)\)/);
-  if (m3) { const a = parseDur(m3[1]!); if (a !== undefined) t.arc = a; }
-
-  const m4 = stderr.match(/Total: ([\d.]+[a-zµ]+)/);
-  if (m4) { const u = parseDur(m4[1]!); if (u !== undefined) t.total = u; }
-
-  return t;
 }
 
 async function runPipeline(p: PipelineParams): Promise<Record<string, number> | undefined> {
@@ -144,73 +113,6 @@ async function runPipeline(p: PipelineParams): Promise<Record<string, number> | 
 }
 
 // --- Configuration (overridable for testing) ---
-
-/** Resolve the orca-slicer binary: env override → nix profile → system PATH. */
-function resolveOrcaSlicerBin(): string {
-  if (process.env.ORCA_SLICER_BIN) return process.env.ORCA_SLICER_BIN;
-  if (existsSync('/home/widget/.nix-profile/bin/orca-slicer'))
-    return '/home/widget/.nix-profile/bin/orca-slicer';
-  return 'orca-slicer';
-}
-
-/**
- * Resolve the OrcaSlicer resources directory.
- *
- * Checks (in order):
- *   1. $ORCA_RESOURCES_DIR env var
- *   2. The Nix init script that wraps the extracted AppImage tree
- *      (globs /nix/store/*OrcaSlicer-init for a -w arg with profiles)
- *   3. Common relative paths from the resolved binary location
- *   4. Common system share paths
- */
-function resolveOrcaResourcesDir(): string {
-  if (process.env.ORCA_RESOURCES_DIR) return process.env.ORCA_RESOURCES_DIR;
-
-  // ── Nix: find the extracted AppImage tree via the bwrap init script ──
-  try {
-    const nixInits = readdirSync('/nix/store').filter(
-      (f: string) => f.endsWith('-OrcaSlicer-init'),
-    );
-    for (const init of nixInits) {
-      const content = readFileSync(join('/nix/store', init), 'utf-8');
-      const m = content.match(/-w\s+(\/nix\/store\/[^\s]+)/);
-      if (m && m[1] && existsSync(join(m[1], 'resources', 'profiles', 'BBL'))) {
-        return join(m[1], 'resources');
-      }
-    }
-  } catch { /* not on Nix or no init scripts */ }
-
-  // ── Probe common real-binary-relative locations ──
-  const binPath = resolveOrcaSlicerBin();
-  let realBinDir: string;
-  try {
-    realBinDir = dirname(realpathSync(binPath));
-  } catch {
-    realBinDir = dirname(binPath);
-  }
-
-  const candidates = [
-    // Bundled (AppImage extract layout, macOS .app, manual install)
-    join(realBinDir, 'resources'),
-    join(dirname(binPath), 'resources'),
-    // System package: /usr/share/orca-slicer/resources
-    join(dirname(binPath), '..', 'share', 'orca-slicer', 'resources'),
-    join(realBinDir, '..', 'share', 'orca-slicer', 'resources'),
-    // Source build: binary at build/src/orca-slicer, resources at repo root
-    join(dirname(binPath), '..', '..', 'resources'),
-    join(realBinDir, '..', '..', 'resources'),
-  ];
-
-  const seen = new Set<string>();
-  for (const dir of candidates) {
-    const norm = normalize(dir);
-    if (seen.has(norm)) continue;
-    seen.add(norm);
-    if (existsSync(join(norm, 'profiles', 'BBL'))) return norm;
-  }
-
-  return '';
-}
 
 const repoRoot = join(import.meta.dir, '..', '..', '..');
 
