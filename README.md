@@ -76,13 +76,13 @@ packages/
 │   │   ├── renderer/   # GLSL shaders, geometry, segbin loader
 │   │   ├── components/ # ModelViewer, App
 │   │   └── __tests__/
-│   └── public/         # Static assets (env maps, Draco decoder)
+│   └── public/         # Static assets (env maps)
 ├── backend/            # Express API for slicing pipeline and frontend proxy
-├── gcode-to-segbin/    # Rust CLI: GCode → .segbin
-│   └── src/
-│       ├── parser.rs   # GCode state machine
-│       ├── arcs.rs     # Conic fillet subdivision at corners
-│       └── cull/       # Surface culling (contour / ray)
+└── gcode-to-segbin/    # Rust CLI: GCode → .segbin
+    └── src/
+        ├── parser.rs   # GCode state machine
+        ├── arcs.rs     # Conic fillet subdivision at corners
+        └── cull/       # Surface culling (contour / ray)
 ```
 
 ## Todo (Future wishlist)
@@ -95,5 +95,5 @@ packages/
 ## Licenses
 
 - **Code**: MIT (see [`LICENSE`](LICENSE))
-- **Environment map** (`horn-koppe_spring_1k.hdr`): CC0 (Poly Haven)
-- **Calibration cube**: CC-BY 4.0 by DoomBro on [Printables](https://www.printables.com/model/32539-xyz-10mm-calibration-cube)
+- **Calibration cube model**: CC-BY 4.0 by DoomBro on [Printables](https://www.printables.com/model/32539-xyz-10mm-calibration-cube)
+- **Environment map**: CC0 from [Poly Haven](https://polyhaven.com/a/horn-koppe_spring)
