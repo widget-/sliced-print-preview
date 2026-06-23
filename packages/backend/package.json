@@ -22,7 +22,6 @@
     "typescript": "^5"
   },
   "dependencies": {
-    "@gltf-transform/cli": "^4.3.0",
     "express": "^5.2.1",
     "multer": "^2.1.1"
   }

@@ -36,7 +36,60 @@ Frontend
 - 3-level level-of-detail (LOD) system to reduce rendering cost
 - Tuneable material properties (color, roughness, metallic, etc.)
 
+## Prerequisites
+
+| Tool | Required for | Notes |
+|------|-------------|-------|
+| [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) | Slicing 3D models into GCode | Install any way you like (AppImage, package manager, [Nix](https://search.nixos.org/packages?query=orca-slicer), or build from source) |
+| Rust toolchain | Building `gcode-to-segbin` CLI | `cargo` + `rustc` — install via [rustup](https://rustup.rs) |
+| [Bun](https://bun.sh) | Running frontend and backend | Install via `curl -fsSL https://bun.sh/install \| bash` or your package manager |
+
 ## Quick start
+
+### 1. Build the Rust pipeline
+
+```bash
+cd packages/gcode-to-segbin
+cargo build --release
+```
+
+### 2. Install frontend deps
+
+```bash
+cd packages/frontend
+bun i
+```
+
+### 3. Install backend deps
+
+```bash
+cd packages/backend
+bun i
+```
+
+### 4. Start the backend (point it at your OrcaSlicer)
+
+```bash
+ORCA_SLICER_BIN=/path/to/orca-slicer \
+  ORCA_RESOURCES_DIR=/path/to/orca-slicer/resources \
+  bun run dev
+```
+
+The backend looks for OrcaSlicer in this order:
+1. `$ORCA_SLICER_BIN` environment variable — **recommended for everyone**
+2. `$ORCA_RESOURCES_DIR` — path to OrcaSlicer's `resources/` folder (contains printer/filament profiles), also recommended to set explicitly
+3. On PATH — the binary name `orca-slicer` is used as fallback
+
+> **Note about printer profiles:** The backend currently uses A1 Mini 0.4mm profiles. If you want a different printer, edit the profile paths in `packages/backend/src/index.ts`.
+
+### 5. Start the frontend (separate terminal)
+
+```bash
+cd packages/frontend
+bun dev
+```
+
+The frontend runs on `http://localhost:5173` and the backend on `http://localhost:3000`. In dev mode the backend proxies non-API requests to Vite's dev server automatically.
 
 ### Nix (recommended)
 
@@ -44,28 +97,7 @@ Frontend
 nix-shell
 ```
 
-### Without Nix
-
-Install `bun` and `cargo`
-
-### Running the project
-
-```bash
-cd packages/gcode-to-segbin
-cargo build --release
-```
-
-```bash
-cd packages/frontend
-bun i
-bun dev
-```
-
-```bash
-cd packages/backend
-bun i
-bun dev
-```
+This provides Bun, Rust, and Node.js. You'll still need OrcaSlicer installed separately.
 
 ## Code layout
 
