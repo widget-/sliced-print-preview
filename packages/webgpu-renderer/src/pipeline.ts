@@ -40,6 +40,7 @@ export class SlicedPipeline {
 
   // Compute (LOD culling)
   computePipe!: GPUComputePipeline;
+  arcFixupPipe!: GPUComputePipeline;
   computeBGL!: GPUBindGroupLayout;
   computeBG!: GPUBindGroup;
   indirectBuf!: GPUBuffer;
@@ -151,6 +152,10 @@ export class SlicedPipeline {
       layout: cPL,
       compute: { module: cullMod, entryPoint: 'cs_main' },
     });
+    this.arcFixupPipe = d.createComputePipeline({
+      layout: cPL,
+      compute: { module: cullMod, entryPoint: 'cs_arc_fixup' },
+    });
   }
 
   setSegments(buffers: GpuSegmentBuffers) {
@@ -227,11 +232,20 @@ export class SlicedPipeline {
       new Float32Array([vpHeight, Math.tan(Math.PI / 6)]));
 
     const enc = this.device.createCommandEncoder();
-    const pass = enc.beginComputePass();
-    pass.setPipeline(this.computePipe);
-    pass.setBindGroup(0, this.computeBG);
-    pass.dispatchWorkgroups(Math.ceil(count / 64));
-    pass.end();
+
+    // Pass 1: evaluate LOD for all segments
+    const pass1 = enc.beginComputePass();
+    pass1.setPipeline(this.computePipe);
+    pass1.setBindGroup(0, this.computeBG);
+    pass1.dispatchWorkgroups(Math.ceil(count / 64));
+    pass1.end();
+
+    // Pass 2: arcs inherit LOD from predecessor
+    const pass2 = enc.beginComputePass();
+    pass2.setPipeline(this.arcFixupPipe);
+    pass2.setBindGroup(0, this.computeBG);
+    pass2.dispatchWorkgroups(Math.ceil(count / 64));
+    pass2.end();
 
     // Copy LOD counters into indirect draw buffer
     for (let l = 0; l < 3; l++) {

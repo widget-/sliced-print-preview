@@ -67,3 +67,19 @@ fn cs_main(@builtin(global_invocation_id) id: vec3<u32>) {
   atomicStore(&segmentLod[i], lod);
   atomicAdd(&lodCounters[lod], 1u);
 }
+
+@compute @workgroup_size(64)
+fn cs_arc_fixup(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i: u32 = id.x;
+  let count: u32 = arrayLength(&segmentLod);
+  if (i >= count || i == 0u) { return; }
+
+  let data: SegmentData = segments[i];
+  let packed: u32 = u32(data.misc.x);
+  let isArc: bool = (packed & 1u) != 0u;
+  if (!isArc) { return; }
+
+  // Inherit LOD from preceding segment
+  let prevLod: u32 = atomicLoad(&segmentLod[i - 1u]);
+  atomicStore(&segmentLod[i], prevLod);
+}

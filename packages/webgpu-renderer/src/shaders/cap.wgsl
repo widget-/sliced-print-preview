@@ -4,6 +4,13 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let segIdx: u32 = u32(capInfo.x);
   let isEnd: f32 = capInfo.y;
 
+  // Cull if segment is LOD 2 (no caps at far distance)
+  if (segmentLod[segIdx] >= 2u) {
+    var out: VertexOutput;
+    out.clipPos = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    return out;
+  }
+
   let data = segments[segIdx];
   let segColor = colors[segIdx].rgb;
   let capsWidth: f32 = data.startPos.w;
