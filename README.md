@@ -39,7 +39,7 @@ Frontend
 ## Prerequisites
 
 | Tool | Required for | Notes |
-|------|-------------|-------|
+| ---- | ------------ | ----- |
 | [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) | Slicing 3D models into GCode | Install any way you like (AppImage, package manager, [Nix](https://search.nixos.org/packages?query=orca-slicer), or build from source) |
 | Rust toolchain | Building `gcode-to-segbin` CLI | `cargo` + `rustc` — install via [rustup](https://rustup.rs) |
 | [Bun](https://bun.sh) | Running frontend and backend | Install via `curl -fsSL https://bun.sh/install \| bash` or your package manager |
@@ -53,36 +53,44 @@ cd packages/gcode-to-segbin
 cargo build --release
 ```
 
-### 2. Install frontend deps
+### 2. Frontend
 
 ```bash
 cd packages/frontend
 bun i
+bun dev
 ```
 
-### 3. Install backend deps
+### 3. Backend
 
 ```bash
 cd packages/backend
 bun i
-```
+bun dev
 
-### 4. Start the backend (point it at your OrcaSlicer)
-
-```bash
+# or if Orca path detection fails:
 ORCA_SLICER_BIN=/path/to/orca-slicer \
-  ORCA_RESOURCES_DIR=/path/to/orca-slicer/resources \
-  bun run dev
+    ORCA_RESOURCES_DIR=/path/to/orca-slicer/resources \
+    bun dev
 ```
 
-The backend looks for OrcaSlicer in this order:
-1. `$ORCA_SLICER_BIN` environment variable — **recommended for everyone**
-2. `$ORCA_RESOURCES_DIR` — path to OrcaSlicer's `resources/` folder (contains printer/filament profiles), also recommended to set explicitly
-3. On PATH — the binary name `orca-slicer` is used as fallback
+The backend also auto-detects OrcaSlicer if it's on PATH or installed via Nix,
+so the env vars above are only needed if auto-detection doesn't find it.
 
-> **Note about printer profiles:** The backend currently uses A1 Mini 0.4mm profiles. If you want a different printer, edit the profile paths in `packages/backend/src/index.ts`.
+The backend attempts to find OrcaSlicer in this order:
 
-### 5. Start the frontend (separate terminal)
+1. `$ORCA_SLICER_BIN` environment variable
+2. `orca-slicer` on PATH
+
+And for the resources directory (printer/filament profiles):
+
+1. `$ORCA_RESOURCES_DIR` environment variable
+2. Auto-detected from the Nix store, or from common locations relative to the
+   OrcaSlicer binary (bundled AppImage, system package, source build)
+
+Note: For now, the backend is hardcoded to use the profile for an A1 Mini with 0.2mm layer height.
+
+### 4. Start the frontend (separate terminal)
 
 ```bash
 cd packages/frontend

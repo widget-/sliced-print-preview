@@ -1,10 +1,9 @@
 import express from 'express';
 import multer from 'multer';
 import { execSync, spawnSync } from 'node:child_process';
-import { mkdirSync, existsSync, renameSync, readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, existsSync, renameSync, readFileSync, writeFileSync, statSync, readdirSync, realpathSync } from 'node:fs';
+import { join, normalize } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
 
 // --- Timestamped logging ---
 function log(msg: string) {
@@ -146,9 +145,6 @@ async function runPipeline(p: PipelineParams): Promise<Record<string, number> | 
 
 // --- Configuration (overridable for testing) ---
 
-/** Resolve OrcaSlicer resources dir: env override → Nix store (from init script) → fallback. */
-const repoRoot = join(import.meta.dir, '..', '..', '..');
-
 /** Resolve the orca-slicer binary: env override → nix profile → system PATH. */
 function resolveOrcaSlicerBin(): string {
   if (process.env.ORCA_SLICER_BIN) return process.env.ORCA_SLICER_BIN;
@@ -157,25 +153,66 @@ function resolveOrcaSlicerBin(): string {
   return 'orca-slicer';
 }
 
-/** Resolve the OrcaSlicer resources directory: env override → Nix store init script. */
+/**
+ * Resolve the OrcaSlicer resources directory.
+ *
+ * Checks (in order):
+ *   1. $ORCA_RESOURCES_DIR env var
+ *   2. The Nix init script that wraps the extracted AppImage tree
+ *      (globs /nix/store/*OrcaSlicer-init for a -w arg with profiles)
+ *   3. Common relative paths from the resolved binary location
+ *   4. Common system share paths
+ */
 function resolveOrcaResourcesDir(): string {
   if (process.env.ORCA_RESOURCES_DIR) return process.env.ORCA_RESOURCES_DIR;
 
-  // The Nix init script that bwrap runs contains the extracted path as the -w arg.
-  const initScript = '/nix/store/rj73c36kcah30wwv38k639i8bhfpiavj-OrcaSlicer-init';
+  // ── Nix: find the extracted AppImage tree via the bwrap init script ──
   try {
-    const content = readFileSync(initScript, 'utf-8');
-    const m = content.match(/-w\s+(\/nix\/store\/[^\s]+)/);
-    if (m) {
-      const resourcesDir = join(m[1], 'resources');
-      if (existsSync(join(resourcesDir, 'profiles', 'BBL')))
-        return resourcesDir;
+    const nixInits = readdirSync('/nix/store').filter(
+      (f: string) => f.endsWith('-OrcaSlicer-init'),
+    );
+    for (const init of nixInits) {
+      const content = readFileSync(join('/nix/store', init), 'utf-8');
+      const m = content.match(/-w\s+(\/nix\/store\/[^\s]+)/);
+      if (m && existsSync(join(m[1], 'resources', 'profiles', 'BBL'))) {
+        return join(m[1], 'resources');
+      }
     }
-  } catch { /* fall through */ }
+  } catch { /* not on Nix or no init scripts */ }
 
-  // Last resort — let OrcaSlicer itself find its resources
+  // ── Probe common real-binary-relative locations ──
+  const binPath = resolveOrcaSlicerBin();
+  let realBinDir: string;
+  try {
+    realBinDir = dirname(realpathSync(binPath));
+  } catch {
+    realBinDir = dirname(binPath);
+  }
+
+  const candidates = [
+    // Bundled (AppImage extract layout, macOS .app, manual install)
+    join(realBinDir, 'resources'),
+    join(dirname(binPath), 'resources'),
+    // System package: /usr/share/orca-slicer/resources
+    join(dirname(binPath), '..', 'share', 'orca-slicer', 'resources'),
+    join(realBinDir, '..', 'share', 'orca-slicer', 'resources'),
+    // Source build: binary at build/src/orca-slicer, resources at repo root
+    join(dirname(binPath), '..', '..', 'resources'),
+    join(realBinDir, '..', '..', 'resources'),
+  ];
+
+  const seen = new Set<string>();
+  for (const dir of candidates) {
+    const norm = normalize(dir);
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    if (existsSync(join(norm, 'profiles', 'BBL'))) return norm;
+  }
+
   return '';
 }
+
+const repoRoot = join(import.meta.dir, '..', '..', '..');
 
 export const config = {
   port: parseInt(process.env.PORT || '3000'),
