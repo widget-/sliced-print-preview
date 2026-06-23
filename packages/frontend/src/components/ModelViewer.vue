@@ -22,7 +22,7 @@ import { TAARenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeli
 import { FxaaPostProcess } from '@babylonjs/core/PostProcesses/fxaaPostProcess';
 
 import { parseSegbin, buildShaderMeshes, Role } from '../renderer/SegbinLoader';
-import type { SegbinData } from '../renderer/SegbinLoader';
+import type { SegbinData } from '@sliced/shared';
 import type { BuildResult } from '../renderer/SegbinLoader';
 import { LOD_BODY_GEO, LOD_CAP_GEO } from '../renderer/geometry';
 

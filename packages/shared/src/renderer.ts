@@ -1,5 +1,3 @@
-import type { SegbinData } from './types';
-
 export interface MaterialProps {
   roughness: number;
   metalness: number;

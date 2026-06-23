@@ -1,11 +1,11 @@
 import { Mesh, VertexData, ShaderMaterial, RawTexture, Texture, Matrix, Vector2, Vector3, Engine, Scene } from '@babylonjs/core';
-import type { SegbinData } from './types';
-import { roleColor } from './types';
-export { Role } from './types';
+import type { SegbinData } from '@sliced/shared';
+import { roleColor } from './types'; // wrapped by Babylon adapter
+export { Role } from '@sliced/shared';
 import { LOD_BODY_GEO, LOD_CAP_GEO } from './geometry';
 import { SEGMENT_VERTEX_SHADER, ENDCAP_VERTEX_SHADER, SEGMENT_FRAGMENT_SHADER } from './shaders';
 
-export type { SegbinData } from './types';
+export type { SegbinData } from '@sliced/shared';
 
 // ── Segment direction helper ────────────────────────────────────────────
 
