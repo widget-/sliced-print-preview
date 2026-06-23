@@ -1,0 +1,29 @@
+{
+  "name": "@pipeline/backend",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "DEV=true bun run --watch src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "start": "bun run dist/index.js",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "test:api": "bun test src/__tests__/api.test.ts",
+    "test:pipeline": "bun test src/__tests__/pipeline.test.ts",
+    "test:integration": "bun test src/__tests__/integration.test.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@gltf-transform/cli": "^4.3.0",
+    "express": "^5.2.1",
+    "multer": "^2.1.1"
+  }
+}

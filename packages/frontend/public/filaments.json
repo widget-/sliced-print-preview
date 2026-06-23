@@ -1,0 +1,662 @@
+{
+  "PETG_MATTE": {
+    "Aliz": {
+      "Lake Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#4da6ff",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Army Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#5f724f",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Klein Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#0057b8",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Orange": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#ff7d00",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Skin Color": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f0c3a4",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "White": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f7f7f7",
+        "alpha": 1.0,
+        "diffuse": 0.85,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Lemon Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#cfe441",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Light Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#c8c8c8",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Cyan": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#00bcd4",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Red": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e53935",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Black": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#0f0f0f",
+        "alpha": 1.0,
+        "diffuse": 0.7,
+        "inventory": 0,
+        "enabled": false
+      }
+    }
+  },
+  "PLA": {
+    "PLA Basic": {
+      "White": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f7f7f7",
+        "alpha": 1.0,
+        "diffuse": 0.85,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Black": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#101010",
+        "alpha": 1.0,
+        "diffuse": 0.72,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Orange": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#ff7d00",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Pink": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f1a0b9",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Skin Color": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f2c1a0",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Red": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#d32f2f",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Yellow": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f5d03a",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#8f8f8f",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Army Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#5f724f",
+        "alpha": 1.0,
+        "diffuse": 0.76,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#3b6ce3",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#28a745",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Peach Pink": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f7aab1",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Dark Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#324d2b",
+        "alpha": 1.0,
+        "diffuse": 0.76,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Magenta": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#d81b60",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Light Brown": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#b0855f",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Cyan": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#00b2c8",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Olive Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#6b8b3b",
+        "alpha": 1.0,
+        "diffuse": 0.77,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Dark Coffee": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#4e3221",
+        "alpha": 1.0,
+        "diffuse": 0.74,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Sky Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#6ccff6",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Violet": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7b3fcc",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Brown": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7b4e2c",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Chocolate": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#5f3a1a",
+        "alpha": 1.0,
+        "diffuse": 0.74,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Apple Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7cc576",
+        "alpha": 1.0,
+        "diffuse": 0.77,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Orchid Purple": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#9a4aa8",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Pine Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#2f4f2f",
+        "alpha": 1.0,
+        "diffuse": 0.76,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Metal Glitter Silver / Metallic Silver": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#b6b6b6",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Marble": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#d7d7d7",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Gray Blue / Dark Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#586673",
+        "alpha": 1.0,
+        "diffuse": 0.74,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Bone Color": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e3d3ab",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Durian Yellow": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e2c52a",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "British Racing Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#1b3d1a",
+        "alpha": 1.0,
+        "diffuse": 0.74,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Brick Red": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#b34224",
+        "alpha": 1.0,
+        "diffuse": 0.79,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Fresh Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#6dd24f",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      }
+    }
+  },
+  "PETG": {
+    "Aliz": {
+      "Black": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#111111",
+        "alpha": 1.0,
+        "diffuse": 0.7,
+        "inventory": 0,
+        "enabled": false
+      },
+      "White": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f8f8f8",
+        "alpha": 1.0,
+        "diffuse": 0.85,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Mint Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#56d8c4",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Orange": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#ff7f2f",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Bright Red": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e63035",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Skin Color": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e3c6ad",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Olive Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#5d6a39",
+        "alpha": 1.0,
+        "diffuse": 0.77,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Lake Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#1f64d9",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Yellow": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f5d03a",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Red Wine": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#8c2721",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Army Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#4f6a30",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Coffee Color": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7a4e2f",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Klein Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#044bbd",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#1f8f4e",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Beige": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#d9c6a6",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Lemon Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#e7ee88",
+        "alpha": 1.0,
+        "diffuse": 0.78,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Magenta": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#de3f8c",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Light Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#c4c4c4",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Cyan": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#00b2c8",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Dark Green": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#38582a",
+        "alpha": 1.0,
+        "diffuse": 0.76,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Milky White": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f5f4ef",
+        "alpha": 1.0,
+        "diffuse": 0.86,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Cinnabar Red": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#c72f2c",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Violet": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7f40d4",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Blue": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#3d73d8",
+        "alpha": 1.0,
+        "diffuse": 0.8,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Brown": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#7d4c2e",
+        "alpha": 1.0,
+        "diffuse": 0.75,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Cherry Blossom Pink": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#f2b3c6",
+        "alpha": 1.0,
+        "diffuse": 0.82,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Iron Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#54575b",
+        "alpha": 1.0,
+        "diffuse": 0.72,
+        "inventory": 0,
+        "enabled": false
+      },
+      "Gray Blue / Dark Gray": {
+        "cost": 13000,
+        "weight": 1000,
+        "hex": "#5f6b74",
+        "alpha": 1.0,
+        "diffuse": 0.74,
+        "inventory": 0,
+        "enabled": false
+      }
+    }
+  }
+}

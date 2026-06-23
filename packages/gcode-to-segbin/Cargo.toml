@@ -1,0 +1,9 @@
+[package]
+name = "gcode-to-segbin"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fastrand = "2"
+bvh = "0.5"
+glam = "0.13"

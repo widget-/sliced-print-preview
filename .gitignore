@@ -1,0 +1,77 @@
+# =============================================================================
+# splat-renderer .gitignore
+# =============================================================================
+
+# --- OrcaSlicer build artifacts ---
+OrcaSlicer/build/
+OrcaSlicer/CMakeCache.txt
+OrcaSlicer/CMakeFiles/
+OrcaSlicer/deps/build/
+OrcaSlicer/deps/DL_CACHE/
+
+# --- mesh2splat build artifacts ---
+mesh2splat/build/
+mesh2splat/bin/
+imgui.ini
+
+# --- Node / Bun ---
+node_modules/
+*.tsbuildinfo
+
+# --- TypeScript compiled output ---
+packages/backend/dist/
+packages/frontend/dist/
+
+# --- IDE / Editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# --- Environment (Nix) ---
+.direnv/
+result
+result-*
+
+# --- Test artifacts ---
+coverage/
+*.lcov
+
+# --- OS files ---
+Thumbs.db
+Desktop.ini
+
+# --- Temporary / generated ---
+*.log
+*.gcode
+*.obj
+*.mtl
+
+*.png
+*.ply
+*.sog
+result.json
+/tmp/
+/temp/
+
+# --- Rust build artifacts ---
+packages/gcode-to-segbin/target/
+
+# --- Code intelligence / tooling ---
+.codegraph/
+
+# --- Upstream reference ---
+orca-upstream/
+
+# --- Backup / scratch files ---
+*.bak
+
+# --- Bun lock files ---
+bun.lock
+
+.reasonix/
+!assets/preview.png
+.envrc
+reasonix.toml
