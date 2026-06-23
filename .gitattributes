@@ -1,0 +1,7 @@
+# Exclude test data and binary assets from GitHub language stats
+test_files/*          linguist-vendored=true
+packages/frontend/public/draco/* linguist-vendored=true
+packages/frontend/public/*.hdr   linguist-vendored=true
+packages/frontend/public/models/* linguist-vendored=true
+packages/backend/assets/*         linguist-vendored=true
+assets/*                          linguist-vendored=true
