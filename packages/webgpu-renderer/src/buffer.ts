@@ -9,6 +9,10 @@ export interface GpuSegmentBuffers {
   colorBuffer: GPUBuffer;
   /** Number of segments in the buffer. */
   count: number;
+  /** Cap instance mapping: each entry is [segmentIndex: f32, isEnd: f32] */
+  capBuffer: GPUBuffer;
+  /** Number of cap instances (chain starts + chain ends). */
+  capCount: number;
 }
 
 /**
@@ -115,7 +119,35 @@ export function buildSegmentBuffers(device: GPUDevice, data: SegbinData): GpuSeg
   }
   colorBuf.unmap();
 
-  return { segmentBuffer: segmentBuf, colorBuffer: colorBuf, count };
+  // ── Cap instance buffer ──
+  // Each cap: [segmentIndex: f32, isEnd: f32] (8 bytes per cap)
+  let capCount = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === 0 || cc[i - 1] === 0) capCount++;
+    if (i === count - 1 || cc[i] === 0) capCount++;
+  }
+  const capBuf = device.createBuffer({
+    size: capCount * 8,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    mappedAtCreation: true,
+  });
+  const capView = new Float32Array(capBuf.getMappedRange());
+  let capN = 0;
+  for (let i = 0; i < count; i++) {
+    if (i === 0 || cc[i - 1] === 0) {
+      capView[capN * 2] = i;
+      capView[capN * 2 + 1] = 0;
+      capN++;
+    }
+    if (i === count - 1 || cc[i] === 0) {
+      capView[capN * 2] = i;
+      capView[capN * 2 + 1] = 1;
+      capN++;
+    }
+  }
+  capBuf.unmap();
+
+  return { segmentBuffer: segmentBuf, colorBuffer: colorBuf, count, capBuffer: capBuf, capCount };
 }
 
 function segDir(g: Float32Array, i: number): [number, number, number] {

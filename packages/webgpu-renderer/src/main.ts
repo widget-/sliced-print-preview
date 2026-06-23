@@ -145,6 +145,7 @@ class WebGPURenderer implements Renderer {
       },
     });
     this.pipeline.draw(pass);
+    this.pipeline.drawCaps(pass);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
 

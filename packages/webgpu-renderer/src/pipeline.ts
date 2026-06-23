@@ -1,4 +1,4 @@
-import { generateBodyGeometry } from './geometry';
+import { generateBodyGeometry, generateCapGeometry } from './geometry';
 import type { GpuSegmentBuffers } from './buffer';
 import { OrbitCamera } from './camera';
 
@@ -35,6 +35,7 @@ struct SegmentData {
 @group(0) @binding(2) var<storage, read> segments: array<SegmentData>;
 @group(0) @binding(3) var<storage, read> colors: array<vec4<f32>>;
 @group(0) @binding(4) var<uniform> lightDir: vec4<f32>;
+@group(0) @binding(5) var<storage, read> capInstances: array<vec2<f32>>;
 
 struct VertexInput {
   @location(0) position: vec3<f32>,
@@ -82,6 +83,60 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   );
 
   let worldPos: vec3<f32> = segPos + rot * local;
+  let worldNormal: vec3<f32> = rot * in.normal;
+
+  var out: VertexOutput;
+  out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);
+  out.worldPos = worldPos;
+  out.worldNormal = worldNormal;
+  out.color = segColor * material.baseColorTint;
+  return out;
+}
+
+@vertex
+fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
+  let capInfo: vec2<f32> = capInstances[ii];
+  let segIdx: u32 = u32(capInfo.x);
+  let isEnd: f32 = capInfo.y;
+
+  let data = segments[segIdx];
+  let segColor = colors[segIdx].rgb;
+
+  // Position at segment start or end
+  let pos: vec3<f32> = select(data.startPos, data.endPos, isEnd > 0.5);
+
+  // Tangent direction (facing outward from the endpoint)
+  let dir: vec3<f32> = data.endPos - data.startPos;
+  let segLen: f32 = length(dir);
+  var tangent: vec3<f32>;
+  if (segLen > 0.001) {
+    tangent = dir / segLen;
+  } else {
+    tangent = vec3<f32>(0.0, 0.0, 1.0);
+  }
+  // For end caps the dome faces along +tangent, for start caps faces opposite
+  let capDir: vec3<f32> = select(-tangent, tangent, isEnd > 0.5);
+
+  // Build orthonormal basis
+  let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+  var rightDir: vec3<f32> = normalize(cross(upDir, capDir));
+  if (length(rightDir) < 0.001) {
+    rightDir = vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let fwdDir: vec3<f32> = cross(rightDir, upDir);
+  let rot = mat3x3<f32>(rightDir, upDir, fwdDir);
+
+  // The cap geometry sits at z=0 (rim) to z=1 (apex).
+  // Scale by width.
+  let hScale: f32 = 1.25;
+  let areaCorrection: f32 = 1.1;
+  let local: vec3<f32> = vec3<f32>(
+    in.position.x * data.width * areaCorrection,
+    in.position.y * data.width * hScale,
+    in.position.z * data.width * hScale  // extrude along cap direction
+  );
+
+  let worldPos: vec3<f32> = pos + rot * local;
   let worldNormal: vec3<f32> = rot * in.normal;
 
   var out: VertexOutput;
@@ -144,6 +199,12 @@ export class SlicedPipeline {
   bindGroupLayout!: GPUBindGroupLayout;
   pipelineLayout!: GPUPipelineLayout;
 
+  // Cap geometry buffers
+  capVertexBuffer!: GPUBuffer;
+  capIndexBuffer!: GPUBuffer;
+  capIndexCount = 0;
+  capPipeline!: GPURenderPipeline;
+
   // Current material (for fast UBO writes)
   material: MaterialUniforms = {
     roughness: 0.10,
@@ -183,6 +244,25 @@ export class SlicedPipeline {
     this.indexBuffer.unmap();
     this.indexCount = geo.indices.length;
 
+    // ── Cap geometry ──
+    const capGeo = generateCapGeometry();
+    this.capVertexBuffer = d.createBuffer({
+      size: capGeo.interleaved.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(this.capVertexBuffer.getMappedRange()).set(capGeo.interleaved);
+    this.capVertexBuffer.unmap();
+
+    this.capIndexBuffer = d.createBuffer({
+      size: capGeo.indices.byteLength,
+      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Uint16Array(this.capIndexBuffer.getMappedRange()).set(capGeo.indices);
+    this.capIndexBuffer.unmap();
+    this.capIndexCount = capGeo.indices.length;
+
     // ── Bind group layout ──
     this.bindGroupLayout = d.createBindGroupLayout({
       entries: [
@@ -191,6 +271,7 @@ export class SlicedPipeline {
         { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // segments
         { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // colors
         { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // lightDir
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // cap instances
       ],
     });
 
@@ -246,6 +327,35 @@ export class SlicedPipeline {
         depthCompare: 'less',
       },
     });
+
+    // ── Cap pipeline ──
+    this.capPipeline = d.createRenderPipeline({
+      layout: this.pipelineLayout,
+      vertex: {
+        module: shaderModule,
+        entryPoint: 'vs_cap',
+        buffers: [{
+          arrayStride: 24,
+          attributes: [
+            { shaderLocation: 0, offset: 0, format: 'float32x3' },
+            { shaderLocation: 1, offset: 12, format: 'float32x3' },
+          ],
+        }],
+      },
+      fragment: {
+        module: shaderModule,
+        entryPoint: 'fs_main',
+        targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
+      },
+      primitive: {
+        topology: 'triangle-list',
+      },
+      depthStencil: {
+        format: 'depth24plus',
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+      },
+    });
   }
 
   /** Set the segment data buffers and rebuild the bind group. */
@@ -259,6 +369,7 @@ export class SlicedPipeline {
         { binding: 2, resource: { buffer: buffers.segmentBuffer } },
         { binding: 3, resource: { buffer: buffers.colorBuffer } },
         { binding: 4, resource: { buffer: this.lightDirBuf } },
+        { binding: 5, resource: { buffer: buffers.capBuffer } },
       ],
     });
   }
@@ -291,7 +402,7 @@ export class SlicedPipeline {
     this.device.queue.writeBuffer(this.cameraBuf, 0, data);
   }
 
-  /** Issue a single draw call. Must be inside a render pass. */
+  /** Issue body draw call. Must be inside a render pass. */
   draw(pass: GPURenderPassEncoder) {
     if (!this.segmentBuffers) return;
     pass.setPipeline(this.pipeline);
@@ -301,14 +412,27 @@ export class SlicedPipeline {
     pass.drawIndexed(this.indexCount, this.segmentBuffers.count);
   }
 
+  /** Issue cap draw call. Must be inside a render pass. */
+  drawCaps(pass: GPURenderPassEncoder) {
+    if (!this.segmentBuffers || !this.segmentBuffers.capCount) return;
+    pass.setPipeline(this.capPipeline);
+    pass.setBindGroup(0, this.bindGroup);
+    pass.setVertexBuffer(0, this.capVertexBuffer);
+    pass.setIndexBuffer(this.capIndexBuffer, 'uint16');
+    pass.drawIndexed(this.capIndexCount, this.segmentBuffers.capCount);
+  }
+
   /** Dispose all GPU resources. */
   dispose() {
     this.vertexBuffer?.destroy();
     this.indexBuffer?.destroy();
+    this.capVertexBuffer?.destroy();
+    this.capIndexBuffer?.destroy();
     this.cameraBuf?.destroy();
     this.materialBuf?.destroy();
     this.lightDirBuf?.destroy();
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
+    this.segmentBuffers?.capBuffer?.destroy();
   }
 }
