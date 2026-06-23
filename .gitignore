@@ -2,13 +2,6 @@
 # sliced-print-preview .gitignore
 # =============================================================================
 
-# --- OrcaSlicer build artifacts (optional — only if building from source) ---
-OrcaSlicer/build/
-OrcaSlicer/CMakeCache.txt
-OrcaSlicer/CMakeFiles/
-OrcaSlicer/deps/build/
-OrcaSlicer/deps/DL_CACHE/
-
 # --- Node / Bun ---
 node_modules/
 *.tsbuildinfo

@@ -149,26 +149,19 @@ async function runPipeline(p: PipelineParams): Promise<Record<string, number> | 
 /** Resolve OrcaSlicer resources dir: env override → Nix store (from init script) → fallback. */
 const repoRoot = join(import.meta.dir, '..', '..', '..');
 
-/** Resolve the orca-slicer binary: env override → nix profile → local build → system PATH. */
+/** Resolve the orca-slicer binary: env override → nix profile → system PATH. */
 function resolveOrcaSlicerBin(): string {
   if (process.env.ORCA_SLICER_BIN) return process.env.ORCA_SLICER_BIN;
-  // Check Nix profile install first
   if (existsSync('/home/widget/.nix-profile/bin/orca-slicer'))
     return '/home/widget/.nix-profile/bin/orca-slicer';
-  const localBuild = join(repoRoot, 'OrcaSlicer', 'build', 'src', 'orca-slicer');
-  if (existsSync(localBuild)) return localBuild;
   return 'orca-slicer';
 }
 
-/**
- * Resolve the OrcaSlicer resources directory from the Nix store.
- * The Nix build wraps the AppImage extraction; the profile JSON files live
- * inside the extracted tree.  We read the init script to find the path.
- */
+/** Resolve the OrcaSlicer resources directory: env override → Nix store init script. */
 function resolveOrcaResourcesDir(): string {
   if (process.env.ORCA_RESOURCES_DIR) return process.env.ORCA_RESOURCES_DIR;
 
-  // The init script that bwrap runs contains the extracted path as the -w arg.
+  // The Nix init script that bwrap runs contains the extracted path as the -w arg.
   const initScript = '/nix/store/rj73c36kcah30wwv38k639i8bhfpiavj-OrcaSlicer-init';
   try {
     const content = readFileSync(initScript, 'utf-8');
@@ -180,8 +173,8 @@ function resolveOrcaResourcesDir(): string {
     }
   } catch { /* fall through */ }
 
-  // Legacy fallback (profiles no longer shipped in repo source tree)
-  return join(repoRoot, 'OrcaSlicer', 'resources');
+  // Last resort — let OrcaSlicer itself find its resources
+  return '';
 }
 
 export const config = {
