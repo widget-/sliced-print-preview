@@ -1,18 +1,13 @@
 # =============================================================================
-# splat-renderer .gitignore
+# sliced-print-preview .gitignore
 # =============================================================================
 
-# --- OrcaSlicer build artifacts ---
+# --- OrcaSlicer build artifacts (optional — only if building from source) ---
 OrcaSlicer/build/
 OrcaSlicer/CMakeCache.txt
 OrcaSlicer/CMakeFiles/
 OrcaSlicer/deps/build/
 OrcaSlicer/deps/DL_CACHE/
-
-# --- mesh2splat build artifacts ---
-mesh2splat/build/
-mesh2splat/bin/
-imgui.ini
 
 # --- Node / Bun ---
 node_modules/
@@ -50,8 +45,6 @@ Desktop.ini
 *.mtl
 
 *.png
-*.ply
-*.sog
 result.json
 /tmp/
 /temp/
@@ -59,18 +52,13 @@ result.json
 # --- Rust build artifacts ---
 packages/gcode-to-segbin/target/
 
-# --- Code intelligence / tooling ---
-.codegraph/
-
-# --- Upstream reference ---
-orca-upstream/
-
 # --- Backup / scratch files ---
 *.bak
 
 # --- Bun lock files ---
 bun.lock
 
+# --- Local tooling ---
 .reasonix/
 !assets/preview.png
 .envrc
