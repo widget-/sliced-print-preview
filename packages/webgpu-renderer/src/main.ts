@@ -15,6 +15,7 @@ export class WebGPURenderer implements Renderer {
   disposed = false;
 
   async mount(_container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
+    if (!canvas) throw new Error('Canvas element is null — mount called before DOM ready');
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
     const device = await adapter.requestDevice();
@@ -179,4 +180,7 @@ async function main() {
   }
 }
 
-main().catch(console.error);
+// Only run standalone when the dev page's canvas element exists
+if (typeof document !== 'undefined' && document.getElementById('render-canvas')) {
+  main().catch(console.error);
+}
