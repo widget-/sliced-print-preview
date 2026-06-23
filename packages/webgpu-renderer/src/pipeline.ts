@@ -1,4 +1,4 @@
-import { generateBodyGeometry, generateCapGeometry } from './geometry';
+import { generateAllBodyGeometries, generateAllCapGeometries } from './geometry';
 import type { GpuSegmentBuffers } from './buffer';
 import { OrbitCamera } from './camera';
 import typesWgsl from './shaders/types.wgsl?raw';
@@ -27,6 +27,20 @@ export class SlicedPipeline {
   indexCount = 0;
   bindGroup!: GPUBindGroup;
 
+  // LOD geometry arrays
+  bodyVertexBuffers: GPUBuffer[] = [];
+  bodyIndexBuffers: GPUBuffer[] = [];
+  bodyIndexCounts: number[] = [];
+  capVertexBuffers: GPUBuffer[] = [];
+  capIndexBuffers: GPUBuffer[] = [];
+  capIndexCounts: number[] = [];
+
+  // Cap buffers (LOD 0 fallback)
+  capVertexBuffer!: GPUBuffer;
+  capIndexBuffer!: GPUBuffer;
+  capIndexCount = 0;
+  capPipeline!: GPURenderPipeline;
+
   // Uniform buffers
   cameraBuf!: GPUBuffer;
   materialBuf!: GPUBuffer;
@@ -36,12 +50,6 @@ export class SlicedPipeline {
   // Bind group layout
   bindGroupLayout!: GPUBindGroupLayout;
   pipelineLayout!: GPUPipelineLayout;
-
-  // Cap geometry buffers
-  capVertexBuffer!: GPUBuffer;
-  capIndexBuffer!: GPUBuffer;
-  capIndexCount = 0;
-  capPipeline!: GPURenderPipeline;
 
   // Current material (for fast UBO writes)
   material: MaterialUniforms = {
@@ -62,44 +70,61 @@ export class SlicedPipeline {
   async init() {
     const d = this.device;
 
-    // ── Vertex geometry ──
-    const geo = generateBodyGeometry();
+    // ── Vertex geometry (3 LOD levels) ──
+    const bodyGeos = generateAllBodyGeometries();
+    const capGeos = generateAllCapGeometries();
 
-    this.vertexBuffer = d.createBuffer({
-      size: geo.interleaved.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
+    this.bodyVertexBuffers = bodyGeos.map((geo) => {
+      const buf = d.createBuffer({
+        size: geo.interleaved.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Float32Array(buf.getMappedRange()).set(geo.interleaved);
+      buf.unmap();
+      return buf;
     });
-    new Float32Array(this.vertexBuffer.getMappedRange()).set(geo.interleaved);
-    this.vertexBuffer.unmap();
+    this.bodyIndexBuffers = bodyGeos.map((geo) => {
+      const buf = d.createBuffer({
+        size: geo.indices.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Uint16Array(buf.getMappedRange()).set(geo.indices);
+      buf.unmap();
+      return buf;
+    });
+    this.bodyIndexCounts = bodyGeos.map((g) => g.indices.length);
 
-    this.indexBuffer = d.createBuffer({
-      size: geo.indices.byteLength,
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
+    this.capVertexBuffers = capGeos.map((geo) => {
+      const buf = d.createBuffer({
+        size: geo.interleaved.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Float32Array(buf.getMappedRange()).set(geo.interleaved);
+      buf.unmap();
+      return buf;
     });
-    new Uint16Array(this.indexBuffer.getMappedRange()).set(geo.indices);
-    this.indexBuffer.unmap();
-    this.indexCount = geo.indices.length;
+    this.capIndexBuffers = capGeos.map((geo) => {
+      const buf = d.createBuffer({
+        size: geo.indices.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Uint16Array(buf.getMappedRange()).set(geo.indices);
+      buf.unmap();
+      return buf;
+    });
+    this.capIndexCounts = capGeos.map((g) => g.indices.length);
 
-    // ── Cap geometry ──
-    const capGeo = generateCapGeometry();
-    this.capVertexBuffer = d.createBuffer({
-      size: capGeo.interleaved.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Float32Array(this.capVertexBuffer.getMappedRange()).set(capGeo.interleaved);
-    this.capVertexBuffer.unmap();
-
-    this.capIndexBuffer = d.createBuffer({
-      size: capGeo.indices.byteLength,
-      usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Uint16Array(this.capIndexBuffer.getMappedRange()).set(capGeo.indices);
-    this.capIndexBuffer.unmap();
-    this.capIndexCount = capGeo.indices.length;
+    // Use LOD 0 for current rendering (single pipeline mode)
+    this.vertexBuffer = this.bodyVertexBuffers[0];
+    this.indexBuffer = this.bodyIndexBuffers[0];
+    this.indexCount = this.bodyIndexCounts[0];
+    this.capVertexBuffer = this.capVertexBuffers[0];
+    this.capIndexBuffer = this.capIndexBuffers[0];
+    this.capIndexCount = this.capIndexCounts[0];
 
     // ── Bind group layout ──
     this.bindGroupLayout = d.createBindGroupLayout({
@@ -268,6 +293,10 @@ export class SlicedPipeline {
     this.indexBuffer?.destroy();
     this.capVertexBuffer?.destroy();
     this.capIndexBuffer?.destroy();
+    for (const b of this.bodyVertexBuffers) b?.destroy();
+    for (const b of this.bodyIndexBuffers) b?.destroy();
+    for (const b of this.capVertexBuffers) b?.destroy();
+    for (const b of this.capIndexBuffers) b?.destroy();
     this.cameraBuf?.destroy();
     this.materialBuf?.destroy();
     this.lightDirBuf?.destroy();

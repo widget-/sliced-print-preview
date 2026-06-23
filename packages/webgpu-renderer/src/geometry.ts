@@ -199,3 +199,20 @@ export function generateCapGeometry(
 
   return { interleaved, indices: new Uint16Array(indices) };
 }
+
+/** All 3 LOD body geometries (matching WebGL2 LOD_BODY_GEO). */
+export function generateAllBodyGeometries(): [BodyGeometry, BodyGeometry, BodyGeometry] {
+  return [
+    generateBodyGeometry(0.35, 5, 3),  // LOD 0: full detail
+    generateBodyGeometry(0.35, 3, 1),  // LOD 1: reduced
+    generateBodyGeometry(0.35, 2, 0),  // LOD 2: minimal
+  ];
+}
+
+/** LOD 0 and 1 cap geometries (LOD 2 has no caps). */
+export function generateAllCapGeometries(): [CapGeometry, CapGeometry] {
+  return [
+    generateCapGeometry(0.35, 5, 4),  // LOD 0: full
+    generateCapGeometry(0.35, 3, 2),  // LOD 1: reduced
+  ];
+}
