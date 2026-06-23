@@ -22,12 +22,10 @@ struct Material {
 };
 
 struct SegmentData {
-  startPos: vec3<f32>,
-  width: f32,
-  endPos: vec3<f32>,
-  pack0: f32,
-  chainTangent: vec3<f32>,
-  layerZ: f32,
+  startPos: vec4<f32>,
+  endPos: vec4<f32>,
+  chain: vec4<f32>,
+  misc: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
@@ -55,30 +53,72 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let segColor = colors[ii].rgb;
 
   let t: f32 = in.position.z + 0.5;
-  let segPos: vec3<f32> = mix(data.startPos, data.endPos, t);
+  let packed: u32 = u32(data.misc.x);
+  let isArc: bool = (packed & 1u) != 0u;
+  let width: f32 = data.startPos.w;
 
-  let dir: vec3<f32> = data.endPos - data.startPos;
-  let segLen: f32 = length(dir);
-  var tangent: vec3<f32>;
-  if (segLen > 0.001) {
-    tangent = dir / segLen;
+  var segPos: vec3<f32>;
+  var endTangent: vec3<f32>;
+
+  if (isArc) {
+    // Rational quadratic Bézier: P0 = start, P1 = end (control), P2 = next.start
+    let p0: vec3<f32> = data.startPos.xyz;
+    let p1: vec3<f32> = data.endPos.xyz;
+    let p2: vec3<f32> = segments[ii + 1u].startPos.xyz;
+    let w: f32 = data.endPos.w;
+    let mt: f32 = 1.0 - t;
+    let mt2: f32 = mt * mt;
+    let t2: f32 = t * t;
+    let denom: f32 = mt2 + 2.0 * t * mt * w + t2;
+    segPos = (mt2 * p0 + 2.0 * t * mt * w * p1 + t2 * p2) / denom;
+
+    // Finite-difference tangent for endTangent
+    let eps: f32 = 0.01;
+    let te: f32 = min(t + eps, 1.0); let me: f32 = 1.0 - te;
+    let me2: f32 = me * me; let te2: f32 = te * te;
+    let de: f32 = me2 + 2.0 * te * me * w + te2;
+    let pe: vec3<f32> = (me2 * p0 + 2.0 * te * me * w * p1 + te2 * p2) / de;
+    let ts: f32 = max(t - eps, 0.0); let ms: f32 = 1.0 - ts;
+    let ms2: f32 = ms * ms; let ts2: f32 = ts * ts;
+    let ds: f32 = ms2 + 2.0 * ts * ms * w + ts2;
+    let ps: vec3<f32> = (ms2 * p0 + 2.0 * ts * ms * w * p1 + ts2 * p2) / ds;
+    let dDir: vec3<f32> = pe - ps;
+    let dLen: f32 = length(dDir);
+    endTangent = select(normalize(dDir), vec3<f32>(0.0, 0.0, 1.0), dLen < 0.0001);
   } else {
-    tangent = vec3<f32>(0.0, 0.0, 1.0);
+    segPos = mix(data.startPos.xyz, data.endPos.xyz, t);
+    let dir: vec3<f32> = data.endPos.xyz - data.startPos.xyz;
+    let segLen: f32 = length(dir);
+    endTangent = select(dir / segLen, vec3<f32>(0.0, 0.0, 1.0), segLen < 0.001);
+  }
+
+  // Interpolate between chain-start tangent and current endTangent
+  let chainStartTangent: vec3<f32> = data.chain.xyz;
+  var tangent: vec3<f32>;
+  let cstLen: f32 = length(chainStartTangent);
+  if (isArc) {
+    // For arcs, use the curve's actual tangent directly (finite difference)
+    // to avoid the chain blend suppressing the curve's direction change
+    tangent = endTangent;
+  } else if (cstLen > 0.001) {
+    tangent = normalize(mix(chainStartTangent, endTangent, t));
+  } else {
+    tangent = endTangent;
   }
 
   let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var rightDir: vec3<f32> = normalize(cross(upDir, tangent));
+  var rightDir: vec3<f32> = -normalize(cross(upDir, tangent));
   if (length(rightDir) < 0.001) {
     rightDir = vec3<f32>(1.0, 0.0, 0.0);
   }
-  let fwdDir: vec3<f32> = cross(rightDir, upDir);
+  let fwdDir: vec3<f32> = -normalize(cross(rightDir, upDir));
   let rot = mat3x3<f32>(rightDir, upDir, fwdDir);
 
   let hScale: f32 = 1.25;
   let areaCorrection: f32 = 1.1;
   let local: vec3<f32> = vec3<f32>(
-    in.position.x * data.width * areaCorrection,
-    in.position.y * data.width * hScale,
+    in.position.x * width * areaCorrection,
+    in.position.y * width * hScale,
     0.0
   );
 
@@ -101,12 +141,13 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
 
   let data = segments[segIdx];
   let segColor = colors[segIdx].rgb;
+  let capsWidth: f32 = data.startPos.w;
 
   // Position at segment start or end
-  let pos: vec3<f32> = select(data.startPos, data.endPos, isEnd > 0.5);
+  let pos: vec3<f32> = select(data.startPos.xyz, data.endPos.xyz, isEnd > 0.5);
 
   // Tangent direction (facing outward from the endpoint)
-  let dir: vec3<f32> = data.endPos - data.startPos;
+  let dir: vec3<f32> = data.endPos.xyz - data.startPos.xyz;
   let segLen: f32 = length(dir);
   var tangent: vec3<f32>;
   if (segLen > 0.001) {
@@ -119,11 +160,11 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
 
   // Build orthonormal basis
   let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var rightDir: vec3<f32> = normalize(cross(upDir, capDir));
+  var rightDir: vec3<f32> = -normalize(cross(upDir, capDir));
   if (length(rightDir) < 0.001) {
     rightDir = vec3<f32>(1.0, 0.0, 0.0);
   }
-  let fwdDir: vec3<f32> = cross(rightDir, upDir);
+  let fwdDir: vec3<f32> = -normalize(cross(rightDir, upDir));
   let rot = mat3x3<f32>(rightDir, upDir, fwdDir);
 
   // The cap geometry sits at z=0 (rim) to z=1 (apex).
@@ -131,9 +172,9 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let hScale: f32 = 1.25;
   let areaCorrection: f32 = 1.1;
   let local: vec3<f32> = vec3<f32>(
-    in.position.x * data.width * areaCorrection,
-    in.position.y * data.width * hScale,
-    in.position.z * data.width * hScale  // extrude along cap direction
+    in.position.x * capsWidth * areaCorrection,
+    in.position.y * capsWidth * hScale,
+    in.position.z * capsWidth * 0.5
   );
 
   let worldPos: vec3<f32> = pos + rot * local;
@@ -320,6 +361,7 @@ export class SlicedPipeline {
       },
       primitive: {
         topology: 'triangle-list',
+        cullMode: 'none',
       },
       depthStencil: {
         format: 'depth24plus',
@@ -349,6 +391,7 @@ export class SlicedPipeline {
       },
       primitive: {
         topology: 'triangle-list',
+        cullMode: 'none',
       },
       depthStencil: {
         format: 'depth24plus',

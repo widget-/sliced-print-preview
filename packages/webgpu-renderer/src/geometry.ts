@@ -114,7 +114,7 @@ export interface CapGeometry {
 export function generateCapGeometry(
   hScale = 0.35,
   edgeSegments = 5,
-  domeSegments = 2,
+  domeSegments = 4,
 ): CapGeometry {
   const R = hScale / 2;
   const W = 0.5;
