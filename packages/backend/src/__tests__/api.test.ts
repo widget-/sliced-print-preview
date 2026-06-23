@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Server } from 'node:http';
 
+type JsonResponse = Record<string, unknown>;
+
 // Test directories
 const TEST_UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'print-preview-test-uploads-'));
 const TEST_OUTPUT_DIR = mkdtempSync(join(tmpdir(), 'print-preview-test-output-'));
@@ -49,7 +51,7 @@ describe('API Endpoints', () => {
   it('GET /api/health returns ok status', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as JsonResponse;
     expect(body.status).toBe('ok');
     expect(body.timestamp).toBeNumber();
   });
@@ -63,7 +65,7 @@ describe('API Endpoints', () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await res.json() as JsonResponse;
     expect(body.error).toContain('No model file');
   });
 
@@ -76,7 +78,7 @@ describe('API Endpoints', () => {
       body: form,
     });
     expect(res.status).toBe(400);
-    const body = await res.json();
+    const body = await res.json() as JsonResponse;
     expect(body.error).toContain('Unsupported file type');
     expect(body.error).toContain('.txt');
   });
@@ -92,7 +94,7 @@ describe('API Endpoints', () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as JsonResponse;
     expect(body.id).toBeString();
     if (body.segbin) {
       expect(body.segbin).toMatch(/\/previews\/.+\/preview\.segbin$/);
@@ -110,7 +112,7 @@ describe('API Endpoints', () => {
       body: form,
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = await res.json() as JsonResponse;
     expect(body.id).toBeString();
   });
 
@@ -123,7 +125,7 @@ describe('API Endpoints', () => {
           method: 'POST',
           body: form,
         });
-        return (await res.json()).id as string;
+        return (await res.json() as JsonResponse).id as string;
       })
     );
     // All IDs should be unique
