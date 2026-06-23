@@ -58,7 +58,6 @@ let segbinData: SegbinData | null = null;
 let buildResult: BuildResult | null = null;  // holds all meshes + LOD groups
 let segbinMeshes: import('@babylonjs/core').Mesh[] = [];
 let loadGen = 0;
-let _lodMaxDim = 0; // model bounding box max dimension, for LOD thresholds
 let lastTriCount = 0;
 let screenshotLodLock = -1; // >= 0 means LOD is locked for screenshot
 
@@ -200,7 +199,6 @@ async function loadSegbinModel(url: string) {
   }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
   const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
-  _lodMaxDim = maxDim;
 
   camera.setTarget(new Vector3(cx, cy, cz));
   camera.alpha = Math.PI / 4;
