@@ -17,6 +17,8 @@ export class OrbitCamera {
 
   /** Column-major 4x4 view-projection matrix, written every frame. */
   viewProj = new Float32Array(16);
+  /** Column-major 4x4 projection matrix, written every frame. */
+  proj = new Float32Array(16);
   /** Camera world position, written every frame. */
   position = new Float64Array([0, 0, 0]);
 
@@ -164,6 +166,7 @@ export class OrbitCamera {
       0, 0, (this.far + this.near) * nf, -1,
       0, 0, 2 * this.far * this.near * nf, 0,
     ];
+    this.proj.set(proj);
 
     // Multiply: viewProj = proj × view
     const vp = new Float32Array(16);

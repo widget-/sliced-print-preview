@@ -37,6 +37,9 @@
         <input type="range" min="0" max="2" step="0.01" v-model.number="ambientStrength" />
         <label>Color</label>
         <input type="color" v-model="baseColorTint" class="color-picker" />
+        <label class="checkbox-label">
+          <input type="checkbox" v-model="ssaoEnabled" /> SSAO
+        </label>
       </div>
     </div>
     <div class="resize-handle" @mousedown="startResize" />
@@ -50,6 +53,7 @@
         :specularStrength="specularStrength"
         :ambientStrength="ambientStrength"
         :baseColorTint="baseColorTint"
+        :ssaoEnabled="ssaoEnabled"
         @model-loaded="onModelLoaded"
       />
       <div v-show="!segbinUrl" class="placeholder">
@@ -74,6 +78,7 @@ const envIntensity = ref(0.25);
 const specularStrength = ref(1.0);
 const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');
+const ssaoEnabled = ref(true);
 
 // Feature-detect WebGPU
 let webgpuAvailable = false;

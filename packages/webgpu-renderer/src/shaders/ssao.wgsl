@@ -6,118 +6,64 @@ struct SSAOParams {
   _pad: f32,
 };
 
-struct ProjParams {
-  p11: f32,
-  p22: f32,
-  near: f32,
-  far: f32,
-};
-
 @group(0) @binding(0) var depthTex: texture_2d<f32>;
-@group(0) @binding(1) var normalTex: texture_storage_2d<rgba8unorm, write>;
-@group(0) @binding(2) var ssaoOut: texture_storage_2d<r8unorm, write>;
-@group(0) @binding(3) var<uniform> params: SSAOParams;
-@group(0) @binding(4) var<uniform> proj: ProjParams;
+@group(0) @binding(1) var<uniform> params: SSAOParams;
+@group(0) @binding(2) var<uniform> screenSize: vec2<f32>;
 
-// ── Normal reconstruction from depth ──
-@compute @workgroup_size(16, 16)
-fn cs_normal(@builtin(global_invocation_id) id: vec3<u32>) {
-  let size: vec2<u32> = textureDimensions(depthTex);
-  if (id.x >= size.x || id.y >= size.y) { return; }
-
-  let uv: vec2<f32> = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
-  let depth: f32 = textureLoad(depthTex, vec2<i32>(id.xy), 0).r;
-  if (depth >= 1.0) { textureStore(normalTex, vec2<i32>(id.xy), vec4<f32>(0.0, 0.0, 1.0, 1.0)); return; }
-
-  let texel: vec2<f32> = 1.0 / vec2<f32>(size);
-  let p11: f32 = proj.p11;
-  let p22: f32 = proj.p22;
-
-  let ndc: vec2<f32> = uv * 2.0 - 1.0;
-  let vPos: vec3<f32> = vec3<f32>(ndc * depth / vec2<f32>(p11, p22), depth);
-
-  let uvL: vec2<f32> = (vec2<f32>(id.xy + vec2<i32>(-1, 0)) + 0.5) / vec2<f32>(size);
-  let uvR: vec2<f32> = (vec2<f32>(id.xy + vec2<i32>(1, 0)) + 0.5) / vec2<f32>(size);
-  let uvU: vec2<f32> = (vec2<f32>(id.xy + vec2<i32>(0, -1)) + 0.5) / vec2<f32>(size);
-  let uvD: vec2<f32> = (vec2<f32>(id.xy + vec2<i32>(0, 1)) + 0.5) / vec2<f32>(size);
-
-  let dL: f32 = textureLoad(depthTex, vec2<i32>(id.xy + vec2<i32>(-1, 0)), 0).r;
-  let dR: f32 = textureLoad(depthTex, vec2<i32>(id.xy + vec2<i32>(1, 0)), 0).r;
-  let dU: f32 = textureLoad(depthTex, vec2<i32>(id.xy + vec2<i32>(0, -1)), 0).r;
-  let dD: f32 = textureLoad(depthTex, vec2<i32>(id.xy + vec2<i32>(0, 1)), 0).r;
-
-  let pL: vec3<f32> = vec3<f32>((uvL * 2.0 - 1.0) * dL / vec2<f32>(p11, p22), dL);
-  let pR: vec3<f32> = vec3<f32>((uvR * 2.0 - 1.0) * dR / vec2<f32>(p11, p22), dR);
-  let pU: vec3<f32> = vec3<f32>((uvU * 2.0 - 1.0) * dU / vec2<f32>(p11, p22), dU);
-  let pD: vec3<f32> = vec3<f32>((uvD * 2.0 - 1.0) * dD / vec2<f32>(p11, p22), dD);
-
-  let n: vec3<f32> = normalize(cross(pD - pU, pR - pL));
-  textureStore(normalTex, vec2<i32>(id.xy), vec4<f32>(n * 0.5 + 0.5, 1.0));
+@vertex
+fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+  let pos = array<vec2<f32>, 3>(vec2<f32>(-1.0, -1.0), vec2<f32>(3.0, -1.0), vec2<f32>(-1.0, 3.0));
+  return vec4<f32>(pos[i], 0.0, 1.0);
 }
 
-// ── SSAO ──
-@compute @workgroup_size(16, 16)
-fn cs_ssao(@builtin(global_invocation_id) id: vec3<u32>) {
-  let size: vec2<u32> = textureDimensions(depthTex);
-  if (id.x >= size.x || id.y >= size.y) { return; }
+// ── SSAO fragment shader ──
+// Uses screen-space derivatives (dFdx/dFdy) to estimate normals from depth.
+// Samples 12 neighbors in a spiral pattern; checks if each is shallower.
+@fragment
+fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
+  let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0).r;
 
-  let uv: vec2<f32> = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(size);
-  let depth: f32 = textureLoad(depthTex, vec2<i32>(id.xy), 0).r;
-  if (depth >= 1.0) { textureStore(ssaoOut, vec2<i32>(id.xy), vec4<f32>(1.0)); return; }
+  // Estimate surface normal from depth derivatives (must be in uniform control flow)
+  let dzdx: f32 = dpdx(depth);
+  let dzdy: f32 = dpdy(depth);
 
-  let nrm: vec4<f32> = textureLoad(normalTex, vec2<i32>(id.xy), 0);
-  let normal: vec3<f32> = normalize(nrm.xyz * 2.0 - 1.0);
+  if (depth >= 1.0) { return 1.0; }
+  let normal: vec3<f32> = normalize(vec3<f32>(-dzdx, -dzdy, 1.0));
 
-  let p11: f32 = proj.p11;
-  let p22: f32 = proj.p22;
-  let ndc: vec2<f32> = uv * 2.0 - 1.0;
-  let vPos: vec3<f32> = vec3<f32>(ndc * depth / vec2<f32>(p11, p22), depth);
-
-  // Tangent frame
-  let T: vec3<f32> = normalize(cross(normal, vec3<f32>(0.0, 0.0, 1.0)));
-  let B: vec3<f32> = cross(normal, T);
-  let rotM: mat3x3<f32> = mat3x3<f32>(T, B, normal);
-
-  let radius: f32 = params.radius;
+  let Rpx: f32 = params.radius;
   let bias: f32 = params.bias;
-  let R: f32 = params.radius;
-  let texel: vec2<f32> = 1.0 / vec2<f32>(size);
-
+  let nsamp: u32 = 12u;
   var occ: f32 = 0.0;
-  // 8 hemisphere samples
-  for (var s: u32 = 0u; s < 8u; s++) {
-    let u1: f32 = f32(s) / 8.0;
-    let u2: f32 = f32((s * 251u + 137u) & 0xFFu) / 256.0;
-    let theta: f32 = 6.28318 * u1;
-    let phi: f32 = acos(u2);
-    let sd: vec3<f32> = vec3<f32>(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
-    let spos: vec3<f32> = vPos + rotM * sd * radius;
-    let suv: vec2<f32> = vec2<f32>(spos.xy * vec2<f32>(p11, p22) / spos.z);
-    let sdepth: f32 = textureLoad(depthTex, vec2<i32>(suv * vec2<f32>(size)), 0).r;
-    let range: f32 = smoothstep(0.0, 1.0, R / abs(vPos.z - sdepth));
-    occ += select(1.0, 0.0, sdepth >= (spos.z - bias)) * range;
+
+  for (var s: u32 = 0u; s < nsamp; s++) {
+    let a: f32 = f32(s) * 6.28318 / f32(nsamp);
+    let r: f32 = (f32(s) + 1.0) / f32(nsamp) * Rpx;
+    let sx: i32 = i32(pos.x) + i32(cos(a) * r);
+    let sy: i32 = i32(pos.y) + i32(sin(a) * r);
+    let cx: i32 = clamp(sx, 0, i32(screenSize.x) - 1);
+    let cy: i32 = clamp(sy, 0, i32(screenSize.y) - 1);
+    let sd: f32 = textureLoad(depthTex, vec2<i32>(cx, cy), 0).r;
+
+    // Get the 3D vector from center to sample in (screen_x, screen_y, depth) space
+    let dx: f32 = f32(sx - i32(pos.x));
+    let dy: f32 = f32(sy - i32(pos.y));
+    let v: vec3<f32> = vec3<f32>(dx, dy, (sd - depth) * 100.0);
+
+    // Weight by dot with normal (hemisphere check)
+    occ += max(0.0, dot(v, normal)) / (dot(v.xy, v.xy) + 0.01);
   }
-  occ = 1.0 - occ / 8.0;
+  occ = 1.0 - 2.0 * params.intensity / f32(nsamp) * occ;
   occ = pow(max(occ, 0.0), params.power);
-  textureStore(ssaoOut, vec2<i32>(id.xy), vec4<f32>(occ));
+  return occ;
 }
 
-// ── Blur (ping-pong: read from ssaoRaw, write to ssaoOut) ──
-@group(0) @binding(5) var ssaoRaw: texture_2d<f32>;
+// ── Composite: scene color × occlusion ──
+@group(1) @binding(0) var compColorTex: texture_2d<f32>;
+@group(1) @binding(1) var compSsaoTex: texture_2d<f32>;
 
-@compute @workgroup_size(16, 16)
-fn cs_blur(@builtin(global_invocation_id) id: vec3<u32>) {
-  let size: vec2<u32> = textureDimensions(ssaoRaw);
-  if (id.x >= size.x || id.y >= size.y) { return; }
-  let texel: vec2<f32> = 1.0 / vec2<f32>(size);
-  var sum: f32 = 0.0;
-  var w: f32 = 0.0;
-  for (var dy: i32 = -2; dy <= 2; dy++) {
-    for (var dx: i32 = -2; dx <= 2; dx++) {
-      let wgt: f32 = 1.0;
-      sum += textureLoad(ssaoRaw, vec2<i32>(id.xy) + vec2<i32>(dx, dy), 0).r * wgt;
-      w += wgt;
-    }
-  }
-  textureStore(ssaoOut, vec2<i32>(id.xy), vec4<f32>(sum / w));
+@fragment
+fn fs_composite(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  let c: vec4<f32> = textureLoad(compColorTex, vec2<i32>(pos.xy), 0);
+  let o: vec4<f32> = textureLoad(compSsaoTex, vec2<i32>(pos.xy), 0);
+  return vec4<f32>(c.rgb * o.r, c.a);
 }

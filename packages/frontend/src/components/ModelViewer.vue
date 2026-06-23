@@ -39,6 +39,7 @@ const props = withDefaults(defineProps<{
   specularStrength?: number;
   ambientStrength?: number;
   baseColorTint?: string;
+  ssaoEnabled?: boolean;
 }>(), {
   rendererType: 'webgl2',
   roughness: 0.10,
@@ -73,6 +74,7 @@ function onMaterialChange() {
       ambientStrength: props.ambientStrength,
       baseColorTint: props.baseColorTint,
     });
+    webgpuRenderer.ssaoEnabled = props.ssaoEnabled !== false;
     return;
   }
   for (const m of segbinMeshes) {
@@ -88,7 +90,7 @@ function onMaterialChange() {
 }
 
 // Auto-apply material props when they change from the parent
-watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint], onMaterialChange);
+watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled], onMaterialChange);
 
 let engine: Engine;
 let scene: Scene;
@@ -374,6 +376,9 @@ onMounted(() => {
           ambientStrength: props.ambientStrength,
           baseColorTint: props.baseColorTint,
         });
+        if (renderer.ssaoEnabled !== undefined) {
+          renderer.ssaoEnabled = props.ssaoEnabled !== false;
+        }
 
         if (props.segbinUrl) {
           const ms = await renderer.loadModel(props.segbinUrl);

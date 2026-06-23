@@ -10,11 +10,12 @@ export class WebGPURenderer implements Renderer {
   context!: GPUCanvasContext;
   pipeline!: SlicedPipeline;
   camera!: OrbitCamera;
-  depthTexture!: GPUTexture;
+  firstFrame = true;
   disposeControls!: () => void;
   disposed = false;
   /** Readable stats for the overlay. Written each frame. */
   stats = { fps: 0, triangles: 0 };
+  ssaoEnabled = true;
   private _statsFrames = 0;
   private _statsTime = 0;
 
@@ -110,13 +111,8 @@ export class WebGPURenderer implements Renderer {
       canvas.height = h;
     }
 
-    // Recreate depth texture at new size
-    if (this.depthTexture) this.depthTexture.destroy();
-    this.depthTexture = this.device.createTexture({
-      size: { width: w, height: h },
-      format: 'depth24plus',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    // Resize SSAO textures
+    this.pipeline.resizeSSAO(w, h);
 
     // Update camera for new aspect ratio
     this.camera.update(w / h);
@@ -127,7 +123,6 @@ export class WebGPURenderer implements Renderer {
     this.disposed = true;
     this.disposeControls?.();
     this.pipeline?.dispose();
-    this.depthTexture?.destroy();
     this.device?.destroy();
   }
 
@@ -151,30 +146,76 @@ export class WebGPURenderer implements Renderer {
     this.camera.update(w / h);
     this.pipeline.writeCameraUBO(this.camera);
 
-    // LOD culling compute pass
+    // Ensure SSAO textures are sized for current viewport
+    this.pipeline.resizeSSAO(w, h);
+
+    // LOD culling compute pass (submits its own encoder)
     this.pipeline.resetIndirect();
     this.pipeline.dispatchCull(h);
 
-    // Render
-    const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder();
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [{
-        view,
-        clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
-        loadOp: 'clear',
-        storeOp: 'store',
-      }],
-      depthStencilAttachment: {
-        view: this.depthTexture.createView(),
-        depthClearValue: 1.0,
-        depthLoadOp: 'clear',
-        depthStoreOp: 'store',
-      },
-    });
-    this.pipeline.drawBody(pass);
-    this.pipeline.drawCaps(pass);
-    pass.end();
+
+    if (this.ssaoEnabled) {
+      // Offscreen render pass (scene → offscreen color + depth32float)
+      {
+        const offPass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: this.pipeline.offscreenColorTex.createView(),
+            clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+          depthStencilAttachment: {
+            view: this.pipeline.ssaoDepthTex.createView(),
+            depthClearValue: 1.0,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
+          },
+        });
+        this.pipeline.drawBody(offPass);
+        this.pipeline.drawCaps(offPass);
+        offPass.end();
+      }
+
+      // SSAO compute pass
+      this.pipeline.dispatchSSAO(encoder);
+
+      // Composite onto swapchain
+      {
+        const swapView = this.context.getCurrentTexture().createView();
+        const swapPass = encoder.beginRenderPass({
+          colorAttachments: [{
+            view: swapView,
+            clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          }],
+        });
+        this.pipeline.composite(swapPass);
+        swapPass.end();
+      }
+    } else {
+      // Render directly to swapchain (no SSAO)
+      const swapView = this.context.getCurrentTexture().createView();
+      const swapPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: swapView,
+          clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: this.pipeline.ssaoDepthTex.createView(),
+          depthClearValue: 1.0,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'store',
+        },
+      });
+      this.pipeline.drawBody(swapPass);
+      this.pipeline.drawCaps(swapPass);
+      swapPass.end();
+    }
+
     this.device.queue.submit([encoder.finish()]);
 
     // FPS tracking

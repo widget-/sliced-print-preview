@@ -6,6 +6,7 @@ import segmentWgsl from './shaders/segment.wgsl?raw';
 import capWgsl from './shaders/cap.wgsl?raw';
 import pbrWgsl from './shaders/pbr.wgsl?raw';
 import cullWgsl from './shaders/cull.wgsl?raw';
+import ssaoWgsl from './shaders/ssao.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
@@ -48,6 +49,25 @@ export class SlicedPipeline {
   lodCountersBuf!: GPUBuffer;
   cullParamsBuf!: GPUBuffer;
   lodLevelBufs: GPUBuffer[] = [];
+
+  // SSAO textures
+  offscreenColorTex!: GPUTexture;
+  ssaoDepthTex!: GPUTexture;
+  ssaoOcclusionTex!: GPUTexture;
+  ssaoWidth = 0; ssaoHeight = 0;
+
+  // SSAO render pass
+  ssaoMod!: GPUShaderModule;
+  ssaoBGL!: GPUBindGroupLayout;
+  ssaoBG!: GPUBindGroup;
+  ssaoParamsBuf!: GPUBuffer;
+  screenSizeBuf!: GPUBuffer;
+  ssaoPipe!: GPURenderPipeline;
+  // Composite pipeline (fullscreen quad)
+  compositeBGL!: GPUBindGroupLayout;
+  compositeBG!: GPUBindGroup;
+  compositePipe!: GPURenderPipeline;
+  offscreenFormat: GPUTextureFormat = 'rgba8unorm';
 
   material: MaterialUniforms = {
     roughness: 0.10, metalness: 0, envIntensity: 0.25,
@@ -125,13 +145,46 @@ export class SlicedPipeline {
       return b;
     });
 
+    // ── SSAO render pass ──
+    this.ssaoMod = d.createShaderModule({ code: ssaoWgsl });
+    this.ssaoParamsBuf = d.createBuffer({ size: 20, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([4.0, 1.0, 0.005, 2.0, 0]));
+
+    // SSAO bind group layout (group 0): depth + params + screenSize
+    this.ssaoBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+
+    // Composite bind group layout (group 1): offscreenColor + occlusion
+    this.compositeBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+      ],
+    });
+
+    // SSAO render pipeline: fullscreen quad → occlusion texture (r32float)
+    const ssaoPL = d.createPipelineLayout({ bindGroupLayouts: [this.ssaoBGL] });
+    this.ssaoPipe = d.createRenderPipeline({
+      layout: ssaoPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_ssao', targets: [{ format: 'r32float' }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
     // ── Render pipelines ──
     const vx = { arrayStride: 24, attributes: [
       { shaderLocation: 0, offset: 0, format: 'float32x3' as const },
       { shaderLocation: 1, offset: 12, format: 'float32x3' as const },
     ]};
-    const ds = { format: 'depth24plus' as const, depthWriteEnabled: true, depthCompare: 'less' as const };
+    const ds = { format: 'depth32float' as const, depthWriteEnabled: true, depthCompare: 'less' as const };
     const fmt = navigator.gpu.getPreferredCanvasFormat();
+    this.offscreenFormat = fmt;
     const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL] });
 
     for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
@@ -145,6 +198,15 @@ export class SlicedPipeline {
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     this.pipeline = this.bodyPipes[0]; this.capPipeline = this.capPipes[0];
+
+    // ── Composite pipeline (fullscreen quad) ──
+    const compPL = d.createPipelineLayout({ bindGroupLayouts: [null, this.compositeBGL] });
+    this.compositePipe = d.createRenderPipeline({
+      layout: compPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_composite', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list' },
+    });
 
     // ── Compute pipeline ──
     const cPL = d.createPipelineLayout({ bindGroupLayouts: [this.computeBGL] });
@@ -293,6 +355,73 @@ export class SlicedPipeline {
     this.device.queue.writeBuffer(this.cameraBuf, 0, d);
   }
 
+  /** Create or recreate offscreen textures + bind groups at given resolution. */
+  resizeSSAO(w: number, h: number) {
+    if (w === this.ssaoWidth && h === this.ssaoHeight) return;
+    const d = this.device;
+    // Destroy old textures
+    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex]) t?.destroy();
+
+    this.offscreenColorTex = d.createTexture({
+      size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.ssaoDepthTex = d.createTexture({
+      size: [w, h], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.ssaoOcclusionTex = d.createTexture({
+      size: [w, h], format: 'r32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+
+    // Write screen size uniform
+    d.queue.writeBuffer(this.screenSizeBuf, 0, new Float32Array([w, h]));
+
+    // SSAO bind group (group 0): depth texture + params + screenSize
+    this.ssaoBG = d.createBindGroup({
+      layout: this.ssaoBGL,
+      entries: [
+        { binding: 0, resource: this.ssaoDepthTex.createView() },
+        { binding: 1, resource: { buffer: this.ssaoParamsBuf } },
+        { binding: 2, resource: { buffer: this.screenSizeBuf } },
+      ],
+    });
+
+    // Composite bind group (group 1): offscreen color + occlusion
+    this.compositeBG = d.createBindGroup({
+      layout: this.compositeBGL,
+      entries: [
+        { binding: 0, resource: this.offscreenColorTex.createView() },
+        { binding: 1, resource: this.ssaoOcclusionTex.createView() },
+      ],
+    });
+
+    this.ssaoWidth = w;
+    this.ssaoHeight = h;
+  }
+
+  /** Render SSAO to occlusion texture. */
+  dispatchSSAO(enc: GPUCommandEncoder) {
+    if (!this.ssaoWidth || !this.ssaoHeight) return;
+    const pass = enc.beginRenderPass({
+      colorAttachments: [{
+        view: this.ssaoOcclusionTex.createView(),
+        loadOp: 'clear',
+        storeOp: 'store',
+      }],
+    });
+    pass.setPipeline(this.ssaoPipe);
+    pass.setBindGroup(0, this.ssaoBG);
+    pass.draw(3);
+    pass.end();
+  }
+
+  /** Composite offscreen color × SSAO to a render pass (swapchain). */
+  composite(pass: GPURenderPassEncoder) {
+    if (!this.compositeBG) return;
+    pass.setPipeline(this.compositePipe);
+    pass.setBindGroup(1, this.compositeBG);
+    pass.draw(3); // fullscreen triangle
+  }
+
   dispose() {
     for (const b of this.bodyVB) b?.destroy();
     for (const b of this.bodyIB) b?.destroy();
@@ -304,5 +433,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();
+    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex]) t?.destroy();
+    this.ssaoParamsBuf?.destroy();
   }
 }
