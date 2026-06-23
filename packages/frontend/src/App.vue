@@ -76,9 +76,17 @@ const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');
 
 // Feature-detect WebGPU
-const webgpuAvailable = typeof navigator !== 'undefined' && typeof (navigator as any).gpu !== 'undefined';
+let webgpuAvailable = false;
+let webgpuReason = '';
+if (typeof navigator === 'undefined') {
+  webgpuReason = 'no navigator (SSR?)';
+} else if (typeof (navigator as any).gpu === 'undefined') {
+  webgpuReason = 'navigator.gpu not found — browser/OS may not support WebGPU, or it needs a flag';
+} else {
+  webgpuAvailable = true;
+}
 const rendererType = computed(() => webgpuAvailable ? 'webgpu' : 'webgl2');
-log(`Renderer: ${rendererType.value}${webgpuAvailable ? '' : ' (WebGPU not available)'}`);
+log(`Renderer: ${rendererType.value}${webgpuReason ? ' (' + webgpuReason + ')' : ''}`);
 
 function fmt(ms: number | undefined): string {
   if (ms === undefined || ms === null) return '-';

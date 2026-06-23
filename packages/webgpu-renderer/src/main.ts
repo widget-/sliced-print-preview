@@ -5,7 +5,7 @@ import { SlicedPipeline } from './pipeline';
 import { OrbitCamera } from './camera';
 import { buildSegmentBuffers } from './buffer';
 
-class WebGPURenderer implements Renderer {
+export class WebGPURenderer implements Renderer {
   device!: GPUDevice;
   context!: GPUCanvasContext;
   pipeline!: SlicedPipeline;

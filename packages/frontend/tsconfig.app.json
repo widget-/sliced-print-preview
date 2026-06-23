@@ -5,7 +5,9 @@
     "types": ["vite/client"],
     "paths": {
       "@sliced/shared": ["../shared/src"],
-      "@sliced/shared/*": ["../shared/src/*"]
+      "@sliced/shared/*": ["../shared/src/*"],
+      "@sliced/webgpu-renderer": ["../webgpu-renderer/src"],
+      "@sliced/webgpu-renderer/*": ["../webgpu-renderer/src/*"]
     },
 
     /* Linting */

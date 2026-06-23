@@ -60,8 +60,20 @@ let segbinMeshes: import('@babylonjs/core').Mesh[] = [];
 let loadGen = 0;
 let lastTriCount = 0;
 let screenshotLodLock = -1; // >= 0 means LOD is locked for screenshot
+let webgpuRenderer: any = null; // WebGPURenderer instance (set when rendererType='webgpu')
 
 function onMaterialChange() {
+  if (webgpuRenderer) {
+    webgpuRenderer.setMaterial({
+      roughness: props.roughness,
+      metalness: props.metalness,
+      envIntensity: props.envIntensity,
+      specularStrength: props.specularStrength,
+      ambientStrength: props.ambientStrength,
+      baseColorTint: props.baseColorTint,
+    });
+    return;
+  }
   for (const m of segbinMeshes) {
     const mat = m.material as ShaderMaterial;
     mat.setFloat('uRoughness', props.roughness);
@@ -140,6 +152,7 @@ async function loadEnvMap() {
 }
 
 function resize() {
+  if (webgpuRenderer) { webgpuRenderer.resize(); return; }
   if (!container.value || disposed) return;
   const { clientWidth, clientHeight } = container.value;
   if (clientWidth === 0 || clientHeight === 0) return;
@@ -327,6 +340,41 @@ function renderFrame() {
 }
 
 onMounted(() => {
+  if (props.rendererType === 'webgpu') {
+    log('Mounting WebGPU renderer...');
+    const canvas = canvasEl.value!;
+    const container = container.value!;
+
+    import('@sliced/webgpu-renderer').then(async ({ WebGPURenderer }) => {
+      try {
+        const renderer = new WebGPURenderer();
+        await renderer.mount(container, canvas);
+        webgpuRenderer = renderer;
+
+        renderer.setMaterial({
+          roughness: props.roughness,
+          metalness: props.metalness,
+          envIntensity: props.envIntensity,
+          specularStrength: props.specularStrength,
+          ambientStrength: props.ambientStrength,
+          baseColorTint: props.baseColorTint,
+        });
+
+        if (props.segbinUrl) {
+          const ms = await renderer.loadModel(props.segbinUrl);
+          emit('model-loaded', ms);
+        }
+
+        log('WebGPU renderer ready');
+      } catch (err) {
+        console.error('[ModelViewer] WebGPU mount failed:', err);
+      }
+    }).catch((err) => {
+      console.error('[ModelViewer] WebGPU module failed to load:', err);
+    });
+    return;
+  }
+
   log('Mounting, setting up Babylon.js...');
   const t0 = performance.now();
 
@@ -387,15 +435,20 @@ onMounted(() => {
 watch(
   () => props.segbinUrl,
   (newUrl, oldUrl) => {
-    if (newUrl && !disposed && newUrl !== oldUrl) {
-      loadSegbinModel(newUrl);
+    if (!newUrl || disposed) return;
+    if (newUrl === oldUrl) return;
+    if (webgpuRenderer) {
+      webgpuRenderer.loadModel(newUrl).then((ms) => emit('model-loaded', ms));
+      return;
     }
+    loadSegbinModel(newUrl);
   },
 );
 
 onBeforeUnmount(() => {
   log('Disposing');
   disposed = true;
+  if (webgpuRenderer) { webgpuRenderer.dispose(); webgpuRenderer = null; return; }
   engine.stopRenderLoop();
   taaPipeline?.dispose();
   fxaaProcess?.dispose();
