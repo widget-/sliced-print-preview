@@ -92,8 +92,8 @@ packages/
 - Better LOD since large models can still end up with >20M triangles
 - A way to get Deepseek v4 to stop trying to give up and revert its changes all the time
 
-## License
+## Licenses
 
 - **Code**: MIT (see [`LICENSE`](LICENSE))
-- **Draco decoder** (`draco_decoder.wasm`): Apache 2.0 (Google)
 - **Environment map** (`horn-koppe_spring_1k.hdr`): CC0 (Poly Haven)
+- **Calibration cube**: CC-BY 4.0 by DoomBro on [Printables](https://www.printables.com/model/32539-xyz-10mm-calibration-cube)
