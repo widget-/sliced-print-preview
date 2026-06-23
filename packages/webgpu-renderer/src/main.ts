@@ -3,7 +3,7 @@ import type { MaterialProps, Renderer, ScreenshotHooks } from '@sliced/shared';
 import { loadSegbin } from '@sliced/shared';
 import { SlicedPipeline } from './pipeline';
 import { OrbitCamera } from './camera';
-import { buildSegmentBuffers } from './buffer';
+import { buildSegmentBuffers, HIDDEN_ROLES } from './buffer';
 
 export class WebGPURenderer implements Renderer {
   device!: GPUDevice;
@@ -39,14 +39,16 @@ export class WebGPURenderer implements Renderer {
   async loadModel(url: string): Promise<number> {
     const t0 = performance.now();
     const parsed = await loadSegbin(url);
-    const buffers = buildSegmentBuffers(this.device, parsed);
+    const buffers = buildSegmentBuffers(this.device, parsed, HIDDEN_ROLES);
     this.pipeline.setSegments(buffers);
 
-    // Fit camera to model bounding box
+    // Fit camera to model bounding box (skip hidden roles)
     const g = parsed.geoms;
+    const roles = parsed.roles;
     let minX = Infinity, minY = Infinity, minZ = Infinity;
     let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     for (let i = 0; i < parsed.count; i++) {
+      if (HIDDEN_ROLES.has(roles[i])) continue;
       const sx = g[i * 8], sy = g[i * 8 + 1], sz = g[i * 8 + 2];
       const ex = g[i * 8 + 3], ey = g[i * 8 + 4], ez = g[i * 8 + 5];
       if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
@@ -57,9 +59,22 @@ export class WebGPURenderer implements Renderer {
       if (ez < minZ) minZ = ez; if (ez > maxZ) maxZ = ez;
     }
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
-    const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
     this.camera.target = new Float64Array([cx, cy, cz]);
-    this.camera.radius = maxDim * 1.5;
+    this.camera.alpha = Math.PI / 4;
+    this.camera.beta = Math.PI / 4;
+
+    // Compute radius to fit model in viewport (both axes)
+    const bSphereR = Math.sqrt(
+      (maxX - minX) ** 2 + (maxY - minY) ** 2 + (maxZ - minZ) ** 2
+    ) / 2;
+    const canvas = this.context.canvas as HTMLCanvasElement;
+    const aspect = canvas.width > 0 && canvas.height > 0 ? canvas.width / canvas.height : 1;
+    const vFovHalf = this.camera.fov / 2;
+    const hFovHalf = Math.atan(Math.tan(vFovHalf) * aspect);
+    const minFovHalf = Math.min(vFovHalf, hFovHalf);
+    this.camera.radius = (bSphereR / Math.sin(minFovHalf)) * 1.15;
+    this.camera.update(canvas.width / canvas.height);
+    this.pipeline.writeCameraUBO(this.camera);
 
     return Math.round(performance.now() - t0);
   }
@@ -98,6 +113,10 @@ export class WebGPURenderer implements Renderer {
       format: 'depth24plus',
       usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
+
+    // Update camera for new aspect ratio
+    this.camera.update(w / h);
+    this.pipeline.writeCameraUBO(this.camera);
   }
 
   dispose(): void {

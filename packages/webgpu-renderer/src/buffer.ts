@@ -1,5 +1,5 @@
 import { SEGMENT_DATA_STRIDE, SEGMENT_DATA_OFFSET, pack0 } from './wgsl-types';
-import { roleColor } from '@sliced/shared';
+import { roleColor, Role } from '@sliced/shared';
 import type { SegbinData } from '@sliced/shared';
 
 export interface GpuSegmentBuffers {
@@ -10,7 +10,14 @@ export interface GpuSegmentBuffers {
   capCount: number;
 }
 
-export function buildSegmentBuffers(device: GPUDevice, data: SegbinData): GpuSegmentBuffers {
+/** Roles that shouldn't be rendered (same as WebGL2 HIDDEN_ROLES). */
+export const HIDDEN_ROLES: Set<number> = new Set([Role.SkirtBrim, Role.Other]);
+
+export function buildSegmentBuffers(
+  device: GPUDevice,
+  data: SegbinData,
+  excludeRoles?: Set<number>,
+): GpuSegmentBuffers {
   const count = data.count;
   const g = data.geoms;
   const cc = data.chainContinue;
@@ -35,7 +42,9 @@ export function buildSegmentBuffers(device: GPUDevice, data: SegbinData): GpuSeg
     view.setFloat32(base + SEGMENT_DATA_OFFSET.startPos, sx, true);
     view.setFloat32(base + SEGMENT_DATA_OFFSET.startPos + 4, sy, true);
     view.setFloat32(base + SEGMENT_DATA_OFFSET.startPos + 8, sz, true);
-    view.setFloat32(base + SEGMENT_DATA_OFFSET.startPos + 12, g[i * 8 + 6], true);
+    const rawWidth = g[i * 8 + 6];
+    const effWidth = excludeRoles?.has(roles[i]) ? 0 : rawWidth;
+    view.setFloat32(base + SEGMENT_DATA_OFFSET.startPos + 12, effWidth, true);
 
     // endPos: [ex, ey, ez, conicWeight]
     view.setFloat32(base + SEGMENT_DATA_OFFSET.endPos, ex, true);
