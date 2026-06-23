@@ -61,6 +61,7 @@ let loadGen = 0;
 let lastTriCount = 0;
 let screenshotLodLock = -1; // >= 0 means LOD is locked for screenshot
 let webgpuRenderer: any = null; // WebGPURenderer instance (set when rendererType='webgpu')
+let webgpuStatsTimer: any = null;
 
 function onMaterialChange() {
   if (webgpuRenderer) {
@@ -351,6 +352,20 @@ onMounted(() => {
         await renderer.mount(cont, canvas);
         webgpuRenderer = renderer;
 
+        // Stats keyboard toggle
+        const onKey = (e: KeyboardEvent) => {
+          if (e.key === '`') stats.value.show = !stats.value.show;
+        };
+        window.addEventListener('keydown', onKey);
+
+        // Poll stats from the WebGPU renderer
+        const statsTimer = setInterval(() => {
+          if (webgpuRenderer) {
+            stats.value = { ...webgpuRenderer.stats, show: stats.value.show };
+          }
+        }, 200);
+        webgpuStatsTimer = statsTimer;
+
         renderer.setMaterial({
           roughness: props.roughness,
           metalness: props.metalness,
@@ -453,7 +468,7 @@ watch(
 onBeforeUnmount(() => {
   log('Disposing');
   disposed = true;
-  if (webgpuRenderer) { webgpuRenderer.dispose(); webgpuRenderer = null; return; }
+  if (webgpuRenderer) { webgpuRenderer.dispose(); webgpuRenderer = null; clearInterval(webgpuStatsTimer); return; }
   engine.stopRenderLoop();
   taaPipeline?.dispose();
   fxaaProcess?.dispose();

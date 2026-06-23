@@ -13,6 +13,10 @@ export class WebGPURenderer implements Renderer {
   depthTexture!: GPUTexture;
   disposeControls!: () => void;
   disposed = false;
+  /** Readable stats for the overlay. Written each frame. */
+  stats = { fps: 0, triangles: 0 };
+  private _statsFrames = 0;
+  private _statsTime = 0;
 
   async mount(_container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
     if (!canvas) throw new Error('Canvas element is null — mount called before DOM ready');
@@ -168,6 +172,15 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.drawCaps(pass);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
+
+    // FPS tracking
+    this._statsFrames++;
+    const now = performance.now();
+    if (now - this._statsTime >= 1000) {
+      this.stats.fps = Math.round(this._statsFrames / ((now - this._statsTime) / 1000));
+      this._statsFrames = 0;
+      this._statsTime = now;
+    }
 
     requestAnimationFrame(this._loop);
   };
