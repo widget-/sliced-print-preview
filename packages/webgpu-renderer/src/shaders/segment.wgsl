@@ -1,5 +1,12 @@
 @vertex
 fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
+  // Cull if this segment isn't assigned to this LOD level
+  if (segmentLod[ii] != lodLevel) {
+    var out: VertexOutput;
+    out.clipPos = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    return out;
+  }
+
   let data = segments[ii];
   let segColor = colors[ii].rgb;
 

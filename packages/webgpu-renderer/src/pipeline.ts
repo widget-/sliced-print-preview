@@ -5,229 +5,167 @@ import typesWgsl from './shaders/types.wgsl?raw';
 import segmentWgsl from './shaders/segment.wgsl?raw';
 import capWgsl from './shaders/cap.wgsl?raw';
 import pbrWgsl from './shaders/pbr.wgsl?raw';
+import cullWgsl from './shaders/cull.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
 export interface MaterialUniforms {
-  roughness: number;
-  metalness: number;
-  envIntensity: number;
-  specularStrength: number;
-  ambientStrength: number;
+  roughness: number; metalness: number; envIntensity: number;
+  specularStrength: number; ambientStrength: number;
   baseColorTint: [number, number, number];
 }
 
 export class SlicedPipeline {
   device: GPUDevice;
-  pipeline!: GPURenderPipeline;
 
-  // Buffers
-  vertexBuffer!: GPUBuffer;
-  indexBuffer!: GPUBuffer;
-  indexCount = 0;
-  bindGroup!: GPUBindGroup;
+  // LOD geometry
+  bodyVB: GPUBuffer[] = []; bodyIB: GPUBuffer[] = []; bodyIC: number[] = [];
+  capVB: GPUBuffer[] = []; capIB: GPUBuffer[] = []; capIC: number[] = [];
 
-  // LOD geometry arrays
-  bodyVertexBuffers: GPUBuffer[] = [];
-  bodyIndexBuffers: GPUBuffer[] = [];
-  bodyIndexCounts: number[] = [];
-  capVertexBuffers: GPUBuffer[] = [];
-  capIndexBuffers: GPUBuffer[] = [];
-  capIndexCounts: number[] = [];
+  // Render pipelines (3 body, 2 caps)
+  bodyPipes: GPURenderPipeline[] = [];
+  capPipes: GPURenderPipeline[] = [];
+  renderBGL!: GPUBindGroupLayout;
+  renderBG!: GPUBindGroup;
+  lodBGs: GPUBindGroup[] = [];
 
-  // Cap buffers (LOD 0 fallback)
-  capVertexBuffer!: GPUBuffer;
-  capIndexBuffer!: GPUBuffer;
-  capIndexCount = 0;
-  capPipeline!: GPURenderPipeline;
+  // Legacy refs (LOD 0)
+  vertexBuffer!: GPUBuffer; indexBuffer!: GPUBuffer; indexCount = 0;
+  capVertexBuffer!: GPUBuffer; capIndexBuffer!: GPUBuffer; capIndexCount = 0;
+  pipeline!: GPURenderPipeline; capPipeline!: GPURenderPipeline;
 
   // Uniform buffers
-  cameraBuf!: GPUBuffer;
-  materialBuf!: GPUBuffer;
-  lightDirBuf!: GPUBuffer;
+  cameraBuf!: GPUBuffer; materialBuf!: GPUBuffer; lightDirBuf!: GPUBuffer;
   segmentBuffers!: GpuSegmentBuffers;
 
-  // Bind group layout
-  bindGroupLayout!: GPUBindGroupLayout;
-  pipelineLayout!: GPUPipelineLayout;
+  // Compute (LOD culling)
+  computePipe!: GPUComputePipeline;
+  computeBGL!: GPUBindGroupLayout;
+  computeBG!: GPUBindGroup;
+  indirectBuf!: GPUBuffer;
+  segmentLodBuf!: GPUBuffer;
+  lodCountersBuf!: GPUBuffer;
+  cullParamsBuf!: GPUBuffer;
+  lodLevelBufs: GPUBuffer[] = [];
 
-  // Current material (for fast UBO writes)
   material: MaterialUniforms = {
-    roughness: 0.10,
-    metalness: 0.0,
-    envIntensity: 0.25,
-    specularStrength: 1.0,
-    ambientStrength: 0.5,
-    baseColorTint: [1.0, 0.878, 0.831],
+    roughness: 0.10, metalness: 0, envIntensity: 0.25,
+    specularStrength: 1, ambientStrength: 0.5,
+    baseColorTint: [1, 0.878, 0.831],
   };
+  lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
 
-  lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1.0];
-
-  constructor(device: GPUDevice) {
-    this.device = device;
-  }
+  constructor(device: GPUDevice) { this.device = device; }
 
   async init() {
     const d = this.device;
 
-    // ── Vertex geometry (3 LOD levels) ──
+    // ── Geometry ──
     const bodyGeos = generateAllBodyGeometries();
     const capGeos = generateAllCapGeometries();
+    const mkVB = (g: { interleaved: Float32Array }) => { const b = d.createBuffer({ size: g.interleaved.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true }); new Float32Array(b.getMappedRange()).set(g.interleaved); b.unmap(); return b; };
+    const mkIB = (g: { indices: Uint16Array }) => { const b = d.createBuffer({ size: g.indices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true }); new Uint16Array(b.getMappedRange()).set(g.indices); b.unmap(); return b; };
+    this.bodyVB = bodyGeos.map(mkVB); this.bodyIB = bodyGeos.map(mkIB); this.bodyIC = bodyGeos.map(g => g.indices.length);
+    this.capVB = capGeos.map(mkVB); this.capIB = capGeos.map(mkIB); this.capIC = capGeos.map(g => g.indices.length);
+    [this.vertexBuffer, this.indexBuffer, this.indexCount] = [this.bodyVB[0], this.bodyIB[0], this.bodyIC[0]];
+    [this.capVertexBuffer, this.capIndexBuffer, this.capIndexCount] = [this.capVB[0], this.capIB[0], this.capIC[0]];
 
-    this.bodyVertexBuffers = bodyGeos.map((geo) => {
-      const buf = d.createBuffer({
-        size: geo.interleaved.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Float32Array(buf.getMappedRange()).set(geo.interleaved);
-      buf.unmap();
-      return buf;
-    });
-    this.bodyIndexBuffers = bodyGeos.map((geo) => {
-      const buf = d.createBuffer({
-        size: geo.indices.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint16Array(buf.getMappedRange()).set(geo.indices);
-      buf.unmap();
-      return buf;
-    });
-    this.bodyIndexCounts = bodyGeos.map((g) => g.indices.length);
+    // ── Shader modules ──
+    const shaderMod = d.createShaderModule({ code: SHADER_SRC });
+    const cullMod = d.createShaderModule({ code: cullWgsl });
 
-    this.capVertexBuffers = capGeos.map((geo) => {
-      const buf = d.createBuffer({
-        size: geo.interleaved.byteLength,
-        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Float32Array(buf.getMappedRange()).set(geo.interleaved);
-      buf.unmap();
-      return buf;
-    });
-    this.capIndexBuffers = capGeos.map((geo) => {
-      const buf = d.createBuffer({
-        size: geo.indices.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint16Array(buf.getMappedRange()).set(geo.indices);
-      buf.unmap();
-      return buf;
-    });
-    this.capIndexCounts = capGeos.map((g) => g.indices.length);
-
-    // Use LOD 0 for current rendering (single pipeline mode)
-    this.vertexBuffer = this.bodyVertexBuffers[0];
-    this.indexBuffer = this.bodyIndexBuffers[0];
-    this.indexCount = this.bodyIndexCounts[0];
-    this.capVertexBuffer = this.capVertexBuffers[0];
-    this.capIndexBuffer = this.capIndexBuffers[0];
-    this.capIndexCount = this.capIndexCounts[0];
-
-    // ── Bind group layout ──
-    this.bindGroupLayout = d.createBindGroupLayout({
+    // ── Bind group layouts ──
+    this.renderBGL = d.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // camera
-        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // material
-        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // segments
-        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // colors
-        { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, // lightDir
-        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } }, // cap instances
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 4, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 5, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 6, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 7, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.computeBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
       ],
     });
 
-    this.pipelineLayout = d.createPipelineLayout({
-      bindGroupLayouts: [this.bindGroupLayout],
-    });
-
     // ── Uniform buffers ──
-    this.cameraBuf = d.createBuffer({
-      size: 64 + 16, // mat4x4<f32> (64) + vec3<f32> padded to 16
+    this.cameraBuf = d.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.materialBuf = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.lightDirBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.writeMaterialUBO(); this.writeLightDirUBO();
+
+    // ── Culling buffers ──
+    this.indirectBuf = d.createBuffer({
+      size: 3 * 20,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.INDIRECT,
+    });
+    this.lodCountersBuf = d.createBuffer({
+      size: 3 * 4, // 3 × u32
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+    });
+    this.cullParamsBuf = d.createBuffer({
+      size: 8,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
-
-    this.materialBuf = d.createBuffer({
-      size: 48, // 5 floats + vec3 (padded correctly)
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.writeMaterialUBO();
-
-    this.lightDirBuf = d.createBuffer({
-      size: 16,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.writeLightDirUBO();
-
-    // ── Render pipeline ──
-    const shaderModule = d.createShaderModule({ code: SHADER_SRC });
-
-    this.pipeline = d.createRenderPipeline({
-      layout: this.pipelineLayout,
-      vertex: {
-        module: shaderModule,
-        entryPoint: 'vs_main',
-        buffers: [{
-          arrayStride: 24, // 6 floats × 4 bytes
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' }, // position
-            { shaderLocation: 1, offset: 12, format: 'float32x3' }, // normal
-          ],
-        }],
-      },
-      fragment: {
-        module: shaderModule,
-        entryPoint: 'fs_main',
-        targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
-        topology: 'triangle-list',
-        cullMode: 'none',
-      },
-      depthStencil: {
-        format: 'depth24plus',
-        depthWriteEnabled: true,
-        depthCompare: 'less',
-      },
+    this.lodLevelBufs = [0, 1, 2].map(lod => {
+      const b = d.createBuffer({ size: 4, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST, mappedAtCreation: true });
+      new Uint32Array(b.getMappedRange()).set([lod]);
+      b.unmap();
+      return b;
     });
 
-    // ── Cap pipeline ──
-    this.capPipeline = d.createRenderPipeline({
-      layout: this.pipelineLayout,
-      vertex: {
-        module: shaderModule,
-        entryPoint: 'vs_cap',
-        buffers: [{
-          arrayStride: 24,
-          attributes: [
-            { shaderLocation: 0, offset: 0, format: 'float32x3' },
-            { shaderLocation: 1, offset: 12, format: 'float32x3' },
-          ],
-        }],
-      },
-      fragment: {
-        module: shaderModule,
-        entryPoint: 'fs_main',
-        targets: [{ format: navigator.gpu.getPreferredCanvasFormat() }],
-      },
-      primitive: {
-        topology: 'triangle-list',
-        cullMode: 'none',
-      },
-      depthStencil: {
-        format: 'depth24plus',
-        depthWriteEnabled: true,
-        depthCompare: 'less',
-      },
+    // ── Render pipelines ──
+    const vx = { arrayStride: 24, attributes: [
+      { shaderLocation: 0, offset: 0, format: 'float32x3' as const },
+      { shaderLocation: 1, offset: 12, format: 'float32x3' as const },
+    ]};
+    const ds = { format: 'depth24plus' as const, depthWriteEnabled: true, depthCompare: 'less' as const };
+    const fmt = navigator.gpu.getPreferredCanvasFormat();
+    const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL] });
+
+    for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
+      layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_main', buffers: [vx] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
+    }));
+    for (let l = 0; l < 2; l++) this.capPipes.push(d.createRenderPipeline({
+      layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_cap', buffers: [vx] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
+    }));
+    this.pipeline = this.bodyPipes[0]; this.capPipeline = this.capPipes[0];
+
+    // ── Compute pipeline ──
+    const cPL = d.createPipelineLayout({ bindGroupLayouts: [this.computeBGL] });
+    this.computePipe = d.createComputePipeline({
+      layout: cPL,
+      compute: { module: cullMod, entryPoint: 'cs_main' },
     });
   }
 
-  /** Set the segment data buffers and rebuild the bind group. */
   setSegments(buffers: GpuSegmentBuffers) {
     this.segmentBuffers = buffers;
-    this.bindGroup = this.device.createBindGroup({
-      layout: this.bindGroupLayout,
+
+    // Segment LOD buffer (atomic u32 per segment)
+    if (this.segmentLodBuf) this.segmentLodBuf.destroy();
+    this.segmentLodBuf = this.device.createBuffer({
+      size: buffers.count * 4,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    // Render bind group
+    this.renderBG = this.device.createBindGroup({
+      layout: this.renderBGL,
       entries: [
         { binding: 0, resource: { buffer: this.cameraBuf } },
         { binding: 1, resource: { buffer: this.materialBuf } },
@@ -235,71 +173,120 @@ export class SlicedPipeline {
         { binding: 3, resource: { buffer: buffers.colorBuffer } },
         { binding: 4, resource: { buffer: this.lightDirBuf } },
         { binding: 5, resource: { buffer: buffers.capBuffer } },
+        { binding: 6, resource: { buffer: this.segmentLodBuf } },
+        { binding: 7, resource: { buffer: this.lodLevelBufs[0] } },
+      ],
+    });
+
+    // Per-LOD bind groups
+    this.lodBGs = [0, 1, 2].map(lod => this.device.createBindGroup({
+      layout: this.renderBGL,
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuf } },
+        { binding: 1, resource: { buffer: this.materialBuf } },
+        { binding: 2, resource: { buffer: buffers.segmentBuffer } },
+        { binding: 3, resource: { buffer: buffers.colorBuffer } },
+        { binding: 4, resource: { buffer: this.lightDirBuf } },
+        { binding: 5, resource: { buffer: buffers.capBuffer } },
+        { binding: 6, resource: { buffer: this.segmentLodBuf } },
+        { binding: 7, resource: { buffer: this.lodLevelBufs[lod] } },
+      ],
+    }));
+
+    // Compute bind group (segments + camera + indirect + lod + cullParams)
+    this.computeBG = this.device.createBindGroup({
+      layout: this.computeBGL,
+      entries: [
+        { binding: 0, resource: { buffer: buffers.segmentBuffer } },
+        { binding: 1, resource: { buffer: this.cameraBuf } },
+        { binding: 2, resource: { buffer: this.indirectBuf } },
+        { binding: 3, resource: { buffer: this.segmentLodBuf } },
+        { binding: 4, resource: { buffer: this.lodCountersBuf } },
+        { binding: 5, resource: { buffer: this.cullParamsBuf } },
       ],
     });
   }
 
-  /** Write material uniforms to the GPU buffer. */
-  writeMaterialUBO() {
-    const m = this.material;
-    const data = new Float32Array([
-      m.roughness, m.metalness, m.envIntensity, m.specularStrength, m.ambientStrength,
-      0, 0, 0, // padding after first 5 floats (fill to 32 bytes)
-      m.baseColorTint[0], m.baseColorTint[1], m.baseColorTint[2],
-      0, // padding
-    ]);
-    this.device.queue.writeBuffer(this.materialBuf, 0, data);
+  /** Zero out indirect draw instance counts and LOD counters. */
+  resetIndirect() {
+    const a = new Uint32Array(15);
+    for (let l = 0; l < 3; l++) {
+      a[l * 5 + 0] = this.bodyIC[l];
+      a[l * 5 + 1] = 0;
+    }
+    this.device.queue.writeBuffer(this.indirectBuf, 0, a);
+    this.device.queue.writeBuffer(this.lodCountersBuf, 0, new Uint32Array(3));
   }
 
-  /** Write light direction UBO. */
-  writeLightDirUBO() {
-    this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir));
-  }
-
-  /** Write camera UBO for the current frame. */
-  writeCameraUBO(camera: OrbitCamera) {
-    // Structure: mat4x4<f32> (64 bytes) + vec3<f32> (12 bytes) padded to vec4 (16 bytes)
-    const data = new Float32Array(20); // 16 for mat4 + 4 for camPos
-    data.set(camera.viewProj, 0);
-    data[16] = camera.position[0];
-    data[17] = camera.position[1];
-    data[18] = camera.position[2];
-    this.device.queue.writeBuffer(this.cameraBuf, 0, data);
-  }
-
-  /** Issue body draw call. Must be inside a render pass. */
-  draw(pass: GPURenderPassEncoder) {
+  /** Dispatch LOD culling, then copy counters to indirect buffer. */
+  dispatchCull(vpHeight: number) {
     if (!this.segmentBuffers) return;
-    pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.setVertexBuffer(0, this.vertexBuffer);
-    pass.setIndexBuffer(this.indexBuffer, 'uint16');
-    pass.drawIndexed(this.indexCount, this.segmentBuffers.count);
+    const count = this.segmentBuffers.count;
+
+    this.device.queue.writeBuffer(this.cullParamsBuf, 0,
+      new Float32Array([vpHeight, Math.tan(Math.PI / 6)]));
+
+    const enc = this.device.createCommandEncoder();
+    const pass = enc.beginComputePass();
+    pass.setPipeline(this.computePipe);
+    pass.setBindGroup(0, this.computeBG);
+    pass.dispatchWorkgroups(Math.ceil(count / 64));
+    pass.end();
+
+    // Copy LOD counters into indirect draw buffer
+    for (let l = 0; l < 3; l++) {
+      enc.copyBufferToBuffer(this.lodCountersBuf, l * 4, this.indirectBuf, l * 20 + 4, 4);
+    }
+
+    this.device.queue.submit([enc.finish()]);
   }
 
-  /** Issue cap draw call. Must be inside a render pass. */
+  /** Draw body for each LOD. Each draws all instances — vertex shader culls by LOD. */
+  drawBody(pass: GPURenderPassEncoder) {
+    if (!this.segmentBuffers) return;
+    for (let l = 0; l < 3; l++) {
+      pass.setPipeline(this.bodyPipes[l]);
+      pass.setBindGroup(0, this.lodBGs[l]);
+      pass.setVertexBuffer(0, this.bodyVB[l]);
+      pass.setIndexBuffer(this.bodyIB[l], 'uint16');
+      pass.drawIndexed(this.bodyIC[l], this.segmentBuffers.count);
+    }
+  }
+
+  /** Draw caps (LOD 0 only, all instances). */
   drawCaps(pass: GPURenderPassEncoder) {
     if (!this.segmentBuffers || !this.segmentBuffers.capCount) return;
-    pass.setPipeline(this.capPipeline);
-    pass.setBindGroup(0, this.bindGroup);
-    pass.setVertexBuffer(0, this.capVertexBuffer);
-    pass.setIndexBuffer(this.capIndexBuffer, 'uint16');
-    pass.drawIndexed(this.capIndexCount, this.segmentBuffers.capCount);
+    pass.setPipeline(this.capPipes[0]);
+    pass.setBindGroup(0, this.lodBGs[0]);
+    pass.setVertexBuffer(0, this.capVB[0]);
+    pass.setIndexBuffer(this.capIB[0], 'uint16');
+    pass.drawIndexed(this.capIC[0], this.segmentBuffers.capCount);
   }
 
-  /** Dispose all GPU resources. */
+  writeMaterialUBO() {
+    const m = this.material;
+    this.device.queue.writeBuffer(this.materialBuf, 0, new Float32Array([
+      m.roughness, m.metalness, m.envIntensity, m.specularStrength, m.ambientStrength,
+      0, 0, 0,
+      m.baseColorTint[0], m.baseColorTint[1], m.baseColorTint[2], 0,
+    ]));
+  }
+  writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
+  writeCameraUBO(camera: OrbitCamera) {
+    const d = new Float32Array(20);
+    d.set(camera.viewProj, 0);
+    d[16] = camera.position[0]; d[17] = camera.position[1]; d[18] = camera.position[2];
+    this.device.queue.writeBuffer(this.cameraBuf, 0, d);
+  }
+
   dispose() {
-    this.vertexBuffer?.destroy();
-    this.indexBuffer?.destroy();
-    this.capVertexBuffer?.destroy();
-    this.capIndexBuffer?.destroy();
-    for (const b of this.bodyVertexBuffers) b?.destroy();
-    for (const b of this.bodyIndexBuffers) b?.destroy();
-    for (const b of this.capVertexBuffers) b?.destroy();
-    for (const b of this.capIndexBuffers) b?.destroy();
-    this.cameraBuf?.destroy();
-    this.materialBuf?.destroy();
-    this.lightDirBuf?.destroy();
+    for (const b of this.bodyVB) b?.destroy();
+    for (const b of this.bodyIB) b?.destroy();
+    for (const b of this.capVB) b?.destroy();
+    for (const b of this.capIB) b?.destroy();
+    this.cameraBuf?.destroy(); this.materialBuf?.destroy(); this.lightDirBuf?.destroy();
+    this.indirectBuf?.destroy(); this.segmentLodBuf?.destroy(); this.lodCountersBuf?.destroy(); this.cullParamsBuf?.destroy();
+    for (const b of this.lodLevelBufs) b?.destroy();
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();

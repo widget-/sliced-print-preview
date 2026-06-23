@@ -151,6 +151,10 @@ export class WebGPURenderer implements Renderer {
     this.camera.update(w / h);
     this.pipeline.writeCameraUBO(this.camera);
 
+    // LOD culling compute pass
+    this.pipeline.resetIndirect();
+    this.pipeline.dispatchCull(h);
+
     // Render
     const view = this.context.getCurrentTexture().createView();
     const encoder = this.device.createCommandEncoder();
@@ -168,7 +172,7 @@ export class WebGPURenderer implements Renderer {
         depthStoreOp: 'store',
       },
     });
-    this.pipeline.draw(pass);
+    this.pipeline.drawBody(pass);
     this.pipeline.drawCaps(pass);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
@@ -180,6 +184,24 @@ export class WebGPURenderer implements Renderer {
       this.stats.fps = Math.round(this._statsFrames / ((now - this._statsTime) / 1000));
       this._statsFrames = 0;
       this._statsTime = now;
+
+      // Read LOD counters for triangle count
+      const rb = this.device.createBuffer({
+        size: 12,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      const re = this.device.createCommandEncoder();
+      re.copyBufferToBuffer(this.pipeline.lodCountersBuf, 0, rb, 0, 12);
+      this.device.queue.submit([re.finish()]);
+      rb.mapAsync(GPUMapMode.READ).then(() => {
+        const v = new Uint32Array(rb.getMappedRange());
+        const tris = (this.pipeline.bodyIC[0] / 3) * v[0] +
+                     (this.pipeline.bodyIC[1] / 3) * v[1] +
+                     (this.pipeline.bodyIC[2] / 3) * v[2] +
+                     (this.pipeline.capIC[0] / 3) * (this.pipeline.segmentBuffers?.capCount || 0);
+        this.stats.triangles = Math.round(tris / 1000);
+        rb.destroy();
+      });
     }
 
     requestAnimationFrame(this._loop);

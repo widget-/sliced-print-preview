@@ -205,7 +205,7 @@ export function generateAllBodyGeometries(): [BodyGeometry, BodyGeometry, BodyGe
   return [
     generateBodyGeometry(0.35, 5, 3),  // LOD 0: full detail
     generateBodyGeometry(0.35, 3, 1),  // LOD 1: reduced
-    generateBodyGeometry(0.35, 2, 0),  // LOD 2: minimal
+    generateBodyGeometry(0.35, 5, 0),  // LOD 2: full cross-section, no interior rings
   ];
 }
 

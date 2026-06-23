@@ -28,6 +28,8 @@ struct SegmentData {
 @group(0) @binding(3) var<storage, read> colors: array<vec4<f32>>;
 @group(0) @binding(4) var<uniform> lightDir: vec4<f32>;
 @group(0) @binding(5) var<storage, read> capInstances: array<vec2<f32>>;
+@group(0) @binding(6) var<storage, read> segmentLod: array<u32>;
+@group(0) @binding(7) var<uniform> lodLevel: u32;
 
 struct VertexInput {
   @location(0) position: vec3<f32>,
