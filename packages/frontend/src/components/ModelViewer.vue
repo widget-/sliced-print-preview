@@ -343,12 +343,12 @@ onMounted(() => {
   if (props.rendererType === 'webgpu') {
     log('Mounting WebGPU renderer...');
     const canvas = canvasEl.value!;
-    const container = container.value!;
+    const cont = container.value!;
 
     import('@sliced/webgpu-renderer').then(async ({ WebGPURenderer }) => {
       try {
         const renderer = new WebGPURenderer();
-        await renderer.mount(container, canvas);
+        await renderer.mount(cont, canvas);
         webgpuRenderer = renderer;
 
         renderer.setMaterial({
@@ -439,6 +439,11 @@ watch(
     if (newUrl === oldUrl) return;
     if (webgpuRenderer) {
       webgpuRenderer.loadModel(newUrl).then((ms) => emit('model-loaded', ms));
+      return;
+    }
+    // WebGPU selected but not loaded yet — fall through to Babylon if it was initialized
+    if (props.rendererType === 'webgpu') {
+      log('segbinUrl change before WebGPU renderer ready — deferring');
       return;
     }
     loadSegbinModel(newUrl);
