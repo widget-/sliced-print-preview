@@ -31,6 +31,11 @@ struct SegmentData {
 @group(0) @binding(6) var<storage, read> segmentLod: array<u32>;
 @group(0) @binding(7) var<uniform> lodLevel: u32;
 
+// Shadow bindings (group 1)
+@group(1) @binding(0) var shadowTex: texture_depth_2d;
+@group(1) @binding(1) var shadowSampler: sampler_comparison;
+@group(1) @binding(2) var<uniform> shadowVP: mat4x4<f32>;
+
 struct VertexInput {
   @location(0) position: vec3<f32>,
   @location(1) normal: vec3<f32>,

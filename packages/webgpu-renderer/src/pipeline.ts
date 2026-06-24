@@ -7,6 +7,7 @@ import capWgsl from './shaders/cap.wgsl?raw';
 import pbrWgsl from './shaders/pbr.wgsl?raw';
 import cullWgsl from './shaders/cull.wgsl?raw';
 import ssaoWgsl from './shaders/ssao.wgsl?raw';
+import shadowWgsl from './shaders/shadow.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
@@ -68,6 +69,17 @@ export class SlicedPipeline {
   compositeBG!: GPUBindGroup;
   compositePipe!: GPURenderPipeline;
   offscreenFormat: GPUTextureFormat = 'rgba8unorm';
+
+  // Shadow mapping
+  shadowTex!: GPUTexture;
+  shadowVPBuf!: GPUBuffer;
+  shadowSampler!: GPUSampler;
+  shadowBGL!: GPUBindGroupLayout;
+  shadowRenderBGL!: GPUBindGroupLayout;
+  shadowBG!: GPUBindGroup;
+  shadowPassBG!: GPUBindGroup;
+  shadowPipe!: GPURenderPipeline;
+  shadowMod!: GPUShaderModule;
 
   material: MaterialUniforms = {
     roughness: 0.10, metalness: 0, envIntensity: 0.25,
@@ -177,6 +189,30 @@ export class SlicedPipeline {
       primitive: { topology: 'triangle-list' },
     });
 
+    // ── Shadow mapping ──
+    this.shadowMod = d.createShaderModule({ code: shadowWgsl });
+    this.shadowVPBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.shadowSampler = d.createSampler({
+      compare: 'less',
+      magFilter: 'linear',
+      minFilter: 'linear',
+    });
+    // Shadow BGL (group 0: lightVP + segments for shadow render pass)
+    this.shadowBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    // Shadow render BGL (used at group 1 of main render pass)
+    this.shadowRenderBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      ],
+    });
+
     // ── Render pipelines ──
     const vx = { arrayStride: 24, attributes: [
       { shaderLocation: 0, offset: 0, format: 'float32x3' as const },
@@ -185,7 +221,7 @@ export class SlicedPipeline {
     const ds = { format: 'depth32float' as const, depthWriteEnabled: true, depthCompare: 'less' as const };
     const fmt = navigator.gpu.getPreferredCanvasFormat();
     this.offscreenFormat = fmt;
-    const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL] });
+    const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL, this.shadowRenderBGL] });
 
     for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_main', buffers: [vx] },
@@ -198,6 +234,20 @@ export class SlicedPipeline {
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     this.pipeline = this.bodyPipes[0]; this.capPipeline = this.capPipes[0];
+
+    // ── Shadow pipeline (depth-only) ──
+    this.shadowTex = d.createTexture({
+      size: [2048, 2048], format: 'depth32float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const shadowPL = d.createPipelineLayout({ bindGroupLayouts: [this.shadowBGL] });
+    this.shadowPipe = d.createRenderPipeline({
+      layout: shadowPL,
+      vertex: { module: this.shadowMod, entryPoint: 'vs_shadow', buffers: [vx] },
+      fragment: { module: this.shadowMod, entryPoint: 'fs_shadow', targets: [] },
+      depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+    });
 
     // ── Composite pipeline (fullscreen quad) ──
     const compPL = d.createPipelineLayout({ bindGroupLayouts: [null, this.compositeBGL] });
@@ -272,6 +322,24 @@ export class SlicedPipeline {
         { binding: 5, resource: { buffer: this.cullParamsBuf } },
       ],
     });
+
+    // Shadow render bind group (main pass, group 1)
+    this.shadowBG = this.device.createBindGroup({
+      layout: this.shadowRenderBGL,
+      entries: [
+        { binding: 0, resource: this.shadowTex.createView() },
+        { binding: 1, resource: this.shadowSampler },
+        { binding: 2, resource: { buffer: this.shadowVPBuf } },
+      ],
+    });
+    // Shadow pass bind group (depth-only, group 0)
+    this.shadowPassBG = this.device.createBindGroup({
+      layout: this.shadowBGL,
+      entries: [
+        { binding: 0, resource: { buffer: this.shadowVPBuf } },
+        { binding: 1, resource: { buffer: buffers.segmentBuffer } },
+      ],
+    });
   }
 
   /** Zero out indirect draw instance counts and LOD counters. */
@@ -323,6 +391,7 @@ export class SlicedPipeline {
     for (let l = 0; l < 3; l++) {
       pass.setPipeline(this.bodyPipes[l]);
       pass.setBindGroup(0, this.lodBGs[l]);
+      pass.setBindGroup(1, this.shadowBG);
       pass.setVertexBuffer(0, this.bodyVB[l]);
       pass.setIndexBuffer(this.bodyIB[l], 'uint16');
       pass.drawIndexed(this.bodyIC[l], this.segmentBuffers.count);
@@ -334,6 +403,7 @@ export class SlicedPipeline {
     if (!this.segmentBuffers || !this.segmentBuffers.capCount) return;
     pass.setPipeline(this.capPipes[0]);
     pass.setBindGroup(0, this.lodBGs[0]);
+    pass.setBindGroup(1, this.shadowBG);
     pass.setVertexBuffer(0, this.capVB[0]);
     pass.setIndexBuffer(this.capIB[0], 'uint16');
     pass.drawIndexed(this.capIC[0], this.segmentBuffers.capCount);
@@ -414,6 +484,29 @@ export class SlicedPipeline {
     pass.end();
   }
 
+  /** Render shadow map (depth-only from light POV). */
+  renderShadowMap(enc: GPUCommandEncoder) {
+    if (!this.segmentBuffers) return;
+    enc.pushDebugGroup('shadow-map');
+    const pass = enc.beginRenderPass({
+      colorAttachments: [],
+      depthStencilAttachment: {
+        view: this.shadowTex.createView(),
+        depthClearValue: 1.0,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+    });
+    pass.setPipeline(this.shadowPipe);
+    pass.setBindGroup(0, this.shadowPassBG);
+    // Draw all LOD 0 body geometry (simplest = enough for shadows)
+    pass.setVertexBuffer(0, this.bodyVB[1]);
+    pass.setIndexBuffer(this.bodyIB[1], 'uint16');
+    pass.drawIndexed(this.bodyIC[1], this.segmentBuffers.count);
+    pass.end();
+    enc.popDebugGroup();
+  }
+
   /** Composite offscreen color × SSAO to a render pass (swapchain). */
   composite(pass: GPURenderPassEncoder) {
     if (!this.compositeBG) return;
@@ -435,5 +528,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.capBuffer?.destroy();
     for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
+    this.shadowTex?.destroy();
+    this.shadowVPBuf?.destroy();
   }
 }

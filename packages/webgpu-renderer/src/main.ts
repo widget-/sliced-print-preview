@@ -81,6 +81,97 @@ export class WebGPURenderer implements Renderer {
     this.camera.update(canvas.width / canvas.height);
     this.pipeline.writeCameraUBO(this.camera);
 
+    // Use OrbitCamera to compute shadow view matrix (guaranteed correct convention)
+    const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) / 2;
+    const ld = this.pipeline.lightDir;
+    const ll = Math.sqrt(ld[0]*ld[0] + ld[1]*ld[1] + ld[2]*ld[2]);
+    const ldx = ld[0]/ll, ldy = ld[1]/ll, ldz = ld[2]/ll;
+
+    // Shadow camera opposite light direction
+    const shadowRadius = maxDim * 5;
+    // Build view matrix using camera.ts lookAt convention
+    const v = new Float64Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]);
+    const p = new Float64Array([
+      1, 0, 0, 0,
+      0, 1, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
+    ]);
+    
+    {
+      // Build shadow camera lookAt matrix matching camera.ts exactly
+      const tx = cx, ty = cy, tz = cz;
+      const px = cx - ldx * shadowRadius;
+      const py = cy - ldy * shadowRadius;
+      const pz = cz - ldz * shadowRadius;
+      
+      // fwd = target - position
+      let fx = tx - px, fy = ty - py, fz = tz - pz;
+      const fLen = Math.sqrt(fx*fx + fy*fy + fz*fz);
+      if (fLen > 0) { fx /= fLen; fy /= fLen; fz /= fLen; }
+      
+      // right = fwd × up (as in camera.ts)
+      let rx = fy, ry = -fx, rz = 0;
+      const rLen = Math.sqrt(rx*rx + ry*ry);
+      if (rLen > 0.001) { rx /= rLen; ry /= rLen; }
+      else { rx = 1; ry = 0; }
+      
+      // up = right × fwd (as in camera.ts)
+      const ux = ry*fz - rz*fy;
+      const uy = rz*fx - rx*fz;
+      const uz = rx*fy - ry*fx;
+      
+      v[0] = rx;  v[4] = ux;  v[8]  = -fx;  v[12] = -(rx*px + ry*py + rz*pz);
+      v[1] = ry;  v[5] = uy;  v[9]  = -fy;  v[13] = -(ux*px + uy*py + uz*pz);
+      v[2] = rz;  v[6] = uz;  v[10] = -fz;  v[14] =  fx*px + fy*py + fz*pz;
+      v[3] = 0;   v[7] = 0;   v[11] = 0;    v[15] = 1;
+    }
+    
+    // Orthographic projection from bounding box corners
+    let lmnX = Infinity, lmxX = -Infinity, lmnY = Infinity, lmxY = -Infinity;
+    let lmnZ = Infinity, lmxZ = -Infinity;
+    for (const sx of [minX, maxX]) {
+      for (const sy of [minY, maxY]) {
+        for (const sz of [minZ, maxZ]) {
+          const x = v[0]*sx + v[4]*sy + v[8]*sz + v[12];
+          const y = v[1]*sx + v[5]*sy + v[9]*sz + v[13];
+          const z = v[2]*sx + v[6]*sy + v[10]*sz + v[14];
+          if (x < lmnX) lmnX = x; if (x > lmxX) lmxX = x;
+          if (y < lmnY) lmnY = y; if (y > lmxY) lmxY = y;
+          if (z < lmnZ) lmnZ = z; if (z > lmxZ) lmxZ = z;
+        }
+      }
+    }
+    // Include camera at z=0
+    if (0 < lmnZ) lmnZ = 0; if (0 > lmxZ) lmxZ = 0;
+    
+    const pad = 1.5;
+    const hlw = Math.max(Math.abs(lmnX), Math.abs(lmxX)) * pad;
+    const hlh = Math.max(Math.abs(lmnY), Math.abs(lmxY)) * pad;
+    const zn = lmnZ - 0.5;   // near (closest, less negative)
+    const zf = lmxZ + 0.5;   // far (farthest, more negative)
+    const depthRange = zf - zn;
+    
+    p[0] = 1/hlw; p[4] = 0;    p[8]  = 0;          p[12] = 0;
+    p[1] = 0;     p[5] = 1/hlh; p[9]  = 0;          p[13] = 0;
+    p[2] = 0;     p[6] = 0;     p[10] = 1/depthRange; p[14] = -zn/depthRange;
+    p[3] = 0;     p[7] = 0;     p[11] = 0;          p[15] = 1;
+    
+    // Multiply: shadowVP = p × v
+    const svp = new Float32Array(16);
+    for (let col = 0; col < 4; col++) {
+      for (let row = 0; row < 4; row++) {
+        svp[col * 4 + row] = p[row] * v[col * 4] + p[4 + row] * v[col * 4 + 1]
+                           + p[8 + row] * v[col * 4 + 2] + p[12 + row] * v[col * 4 + 3];
+      }
+    }
+    this.device.queue.writeBuffer(this.pipeline.shadowVPBuf, 0, svp);
+
     return Math.round(performance.now() - t0);
   }
 
@@ -154,6 +245,9 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.dispatchCull(h);
 
     const encoder = this.device.createCommandEncoder();
+
+    // Shadow map render pass (always, regardless of SSAO)
+    this.pipeline.renderShadowMap(encoder);
 
     if (this.ssaoEnabled) {
       // Offscreen render pass (scene → offscreen color + depth32float)

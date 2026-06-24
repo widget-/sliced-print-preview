@@ -35,6 +35,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let diffuse: f32 = (1.0 - F) * (1.0 - material.metalness) / 3.14159265;
 
   let lightIntensity: f32 = lightDir.w;
-  let lit: vec3<f32> = in.color * (material.ambientStrength + (diffuse + specular) * NdotL * lightIntensity);
+
+  // Shadow mapping (PCF, 5×5 tap) — reference: CSMShadowShaderUtils (MIT, webgpu-sponza-demo)
+  let shadowClip: vec4<f32> = shadowVP * vec4<f32>(in.worldPos, 1.0);
+  let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
+  // NDC [-1,1] → UV [0,1] with Y flip (WebGPU NDC Y up, texture Y down)
+  let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
+  var shadowVis: f32 = 0.0;
+  let texel: f32 = 1.0 / 2048.0;
+  let bias: f32 = 0.001;
+  for (var dy: i32 = -2; dy <= 2; dy++) {
+    for (var dx: i32 = -2; dx <= 2; dx++) {
+      let uv: vec2<f32> = shadowUV + vec2<f32>(f32(dx), f32(dy)) * texel;
+      shadowVis += textureSampleCompareLevel(shadowTex, shadowSampler, uv, shadowNDC.z - bias);
+    }
+  }
+  shadowVis /= 25.0;
+
+  // Apply shadow to diffuse+specular (ambient unaffected)
+  let attenuated: f32 = material.ambientStrength + (diffuse + specular) * NdotL * lightIntensity * shadowVis;
+  let lit: vec3<f32> = in.color * attenuated;
   return vec4<f32>(lit, 1.0);
 }
