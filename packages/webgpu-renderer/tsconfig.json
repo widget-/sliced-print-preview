@@ -8,6 +8,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "isolatedModules": true,
+    "noEmit": true,
     "skipLibCheck": true,
     "types": ["vite/client", "@webgpu/types"],
     "paths": {
