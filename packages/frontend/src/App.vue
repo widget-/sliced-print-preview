@@ -47,8 +47,8 @@
         </select>
       </div>
     </div>
-    <div class="resize-handle" @mousedown="startResize" />
-    <div class="viewer">
+    <div class="resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
+    <div class="viewer" :style="isMobile() ? { height: viewerPercent + '%' } : undefined">
       <ModelViewer
         :key="rendererType"
         :segbinUrl="segbinUrl"
@@ -117,29 +117,60 @@ function log(msg: string) {
 }
 
 const sidebarWidth = ref(320);
+const viewerPercent = ref(60);
 const resizing = ref(false);
+let resizeStartVal = 0;
+let resizeStartPercent = 60;
 
-function startResize(e: MouseEvent) {
+function getResizeClient(e: MouseEvent | TouchEvent): number {
+  return 'touches' in e ? e.touches[0] : e;
+}
+
+function isMobile() {
+  return window.innerWidth <= 768;
+}
+
+function startResize(e: MouseEvent | TouchEvent) {
   resizing.value = true;
+  const pt = getResizeClient(e);
+  if (isMobile()) {
+    resizeStartVal = pt.clientY;
+    resizeStartPercent = viewerPercent.value;
+  } else {
+    resizeStartVal = pt.clientX;
+  }
   document.addEventListener('mousemove', onResize);
   document.addEventListener('mouseup', stopResize);
+  document.addEventListener('touchmove', onResize, { passive: false });
+  document.addEventListener('touchend', stopResize);
   e.preventDefault();
 }
 
-function onResize(e: MouseEvent) {
+function onResize(e: MouseEvent | TouchEvent) {
   if (!resizing.value) return;
-  sidebarWidth.value = Math.max(220, Math.min(600, e.clientX));
+  if (isMobile()) {
+    const pt = getResizeClient(e);
+    const dy = pt.clientY - resizeStartVal;
+    viewerPercent.value = Math.max(40, Math.min(85, resizeStartPercent - (dy / window.innerHeight) * 100));
+  } else {
+    const pt = getResizeClient(e);
+    sidebarWidth.value = Math.max(220, Math.min(600, pt.clientX));
+  }
 }
 
 function stopResize() {
   resizing.value = false;
   document.removeEventListener('mousemove', onResize);
   document.removeEventListener('mouseup', stopResize);
+  document.removeEventListener('touchmove', onResize);
+  document.removeEventListener('touchend', stopResize);
 }
 
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', onResize);
   document.removeEventListener('mouseup', stopResize);
+  document.removeEventListener('touchmove', onResize);
+  document.removeEventListener('touchend', stopResize);
 });
 
 // Load segbin from ?segbin= query param (for headless/playwright mode)
@@ -323,6 +354,21 @@ html, body, #app { height: 100%; font-family: -apple-system, BlinkMacSystemFont,
 .resize-handle { width: 4px; cursor: col-resize; background: var(--app-border); flex-shrink: 0; }
 .resize-handle:hover { background: var(--app-text-muted); }
 
-.viewer { flex: 1; position: relative; min-width: 0; background: var(--app-bg); }
+.viewer { flex: 1; position: relative; min-width: 0; background: var(--app-bg); overscroll-behavior: none; touch-action: none; overflow: hidden; }
 .placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--app-text-muted); font-size: 18px; padding: 20px; text-align: center; }
+
+@media (max-width: 768px) {
+  .app { flex-direction: column; }
+  .sidebar { width: 100% !important; flex: 1; overflow-y: auto; border-right: none; border-top: 1px solid var(--app-border); padding: 12px; }
+  .sidebar h3 { margin-bottom: 10px; }
+  .viewer { flex: none; }
+  .resize-handle { width: 100%; height: 12px; cursor: row-resize; position: relative; display: flex; align-items: center; justify-content: center; background: transparent; }
+  .resize-handle::after { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--app-border); }
+  #material-controls { display: flex; flex-wrap: wrap; gap: 4px; }
+  #material-controls h4 { width: 100%; margin-top: 0; }
+  #material-controls > label:not(.checkbox-label) { flex: 0 0 48%; }
+  #material-controls > input[type="range"] { flex: 0 0 48%; }
+  .builtin-buttons { flex-wrap: wrap; }
+  .status { margin-top: 6px; }
+}
 </style>

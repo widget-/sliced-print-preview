@@ -524,6 +524,7 @@ if (typeof location !== 'undefined' && location.search.includes('screenshot')) {
   height: 100%;
   display: block;
   outline: none;
+  touch-action: none;
 }
 
 .stats-overlay {
