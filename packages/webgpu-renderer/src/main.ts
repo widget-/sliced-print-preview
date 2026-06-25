@@ -255,12 +255,20 @@ export class WebGPURenderer implements Renderer {
     // Offscreen render pass (scene → offscreen color + depth32float)
     {
       const offPass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: this.pipeline.offscreenColorTex.createView(),
-          clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
+        colorAttachments: [
+          {
+            view: this.pipeline.offscreenColorTex.createView(),
+            clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+          {
+            view: this.pipeline.normalTex.createView(),
+            clearValue: { r: 0.5, g: 0.5, b: 0.5, a: 1.0 }, // unpacked normal (0,0,1) → packed 0.5
+            loadOp: 'clear',
+            storeOp: 'store',
+          },
+        ],
         depthStencilAttachment: {
           view: this.pipeline.ssaoDepthTex.createView(),
           depthClearValue: 1.0,

@@ -17,6 +17,8 @@ export class OrbitCamera {
 
   /** Column-major 4x4 view-projection matrix, written every frame. */
   viewProj = new Float32Array(16);
+  /** Column-major 4x4 view matrix. */
+  viewMat = new Float32Array(16);
   /** Column-major 4x4 projection matrix, written every frame. */
   proj = new Float32Array(16);
   /** Camera world position, written every frame. */
@@ -156,6 +158,7 @@ export class OrbitCamera {
       fwd[0] * this.position[0] + fwd[1] * this.position[1] + fwd[2] * this.position[2],
       1,
     ];
+    this.viewMat.set(view);
 
     // Perspective projection (column-major)
     const f = 1 / Math.tan(this.fov / 2);

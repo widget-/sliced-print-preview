@@ -2,6 +2,7 @@ const PI: f32 = 3.14159265359;
 
 struct Camera {
   viewProj: mat4x4<f32>,
+  viewMat: mat4x4<f32>,
   camPos: vec3<f32>,
 };
 

@@ -1,5 +1,10 @@
+struct FragOutput {
+  @location(0) color: vec4<f32>,
+  @location(1) normal: vec4<f32>,
+};
+
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragOutput {
   let N: vec3<f32> = normalize(in.worldNormal);
   let L: vec3<f32> = normalize(lightDir.xyz);
   let V: vec3<f32> = normalize(camera.camPos - in.worldPos);
@@ -55,5 +60,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   // Apply shadow to diffuse+specular (ambient unaffected)
   let attenuated: f32 = material.ambientStrength + (diffuse + specular) * NdotL * lightIntensity * shadowVis;
   let lit: vec3<f32> = in.color * attenuated;
-  return vec4<f32>(lit, 1.0);
+
+  // Output view-space normal packed in [0,1] for G-buffer SSAO
+  let viewN: vec3<f32> = (camera.viewMat * vec4<f32>(N, 0.0)).xyz;
+  return FragOutput(vec4<f32>(lit, 1.0), vec4<f32>(viewN * 0.5 + 0.5, 1.0));
 }

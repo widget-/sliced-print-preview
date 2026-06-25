@@ -54,6 +54,7 @@ export class SlicedPipeline {
 
   // SSAO textures
   offscreenColorTex!: GPUTexture;
+  normalTex!: GPUTexture;
   ssaoDepthTex!: GPUTexture;
   ssaoOcclusionTex!: GPUTexture;
   ssaoWidth = 0; ssaoHeight = 0;
@@ -149,7 +150,7 @@ export class SlicedPipeline {
     });
 
     // ── Uniform buffers ──
-    this.cameraBuf = d.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.cameraBuf = d.createBuffer({ size: 144, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.materialBuf = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.lightDirBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.writeMaterialUBO(); this.writeLightDirUBO();
@@ -186,6 +187,7 @@ export class SlicedPipeline {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
       ],
     });
 
@@ -242,12 +244,12 @@ export class SlicedPipeline {
 
     for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_main', buffers: [vx] },
-      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     for (let l = 0; l < 2; l++) this.capPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_cap', buffers: [vx] },
-      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }, { format: 'rgba8unorm' }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     this.pipeline = this.bodyPipes[0]; this.capPipeline = this.capPipes[0];
@@ -484,9 +486,10 @@ export class SlicedPipeline {
   }
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
   writeCameraUBO(camera: OrbitCamera) {
-    const d = new Float32Array(20);
+    const d = new Float32Array(36);
     d.set(camera.viewProj, 0);
-    d[16] = camera.position[0]; d[17] = camera.position[1]; d[18] = camera.position[2];
+    d.set(camera.viewMat, 16);
+    d[32] = camera.position[0]; d[33] = camera.position[1]; d[34] = camera.position[2];
     this.device.queue.writeBuffer(this.cameraBuf, 0, d);
   }
 
@@ -502,10 +505,13 @@ export class SlicedPipeline {
     if (w === this.ssaoWidth && h === this.ssaoHeight) return;
     const d = this.device;
     // Destroy old textures
-    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
 
     this.offscreenColorTex = d.createTexture({
       size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.normalTex = d.createTexture({
+      size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.ssaoDepthTex = d.createTexture({
       size: [w, h], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -527,6 +533,7 @@ export class SlicedPipeline {
         { binding: 0, resource: this.ssaoDepthTex.createView() },
         { binding: 1, resource: { buffer: this.ssaoParamsBuf } },
         { binding: 2, resource: { buffer: this.screenSizeBuf } },
+        { binding: 3, resource: this.normalTex.createView() },
       ],
     });
 
@@ -686,7 +693,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();
-    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
     this.shadowTex?.destroy();
     this.shadowVPBuf?.destroy();

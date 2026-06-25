@@ -12,6 +12,7 @@ struct SSAOParams {
 @group(0) @binding(0) var depthTex: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> params: SSAOParams;
 @group(0) @binding(2) var<uniform> screenSize: vec2<f32>;
+@group(0) @binding(3) var normalTex: texture_2d<f32>;
 @group(0) @binding(3) var noiseTex: texture_2d<f32>;
 
 @vertex
@@ -47,14 +48,13 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
 
   let linDepth: f32 = linearizeDepth(depth); // view-space Z, negative
 
-  // Reconstruct view-space position and compute geometric normal
+  // Read view-space normal from G-buffer (smooth vertex normals)
   let uv: vec2<f32> = pos.xy / screenSize;
+  let normalEnc: vec4<f32> = textureLoad(normalTex, vec2<i32>(pos.xy), 0);
+  let normal: vec3<f32> = normalize(normalEnc.xyz * 2.0 - 1.0);
+
+  // Reconstruct view-space position for sample comparisons
   let viewPos: vec3<f32> = viewSpacePos(uv, linDepth);
-  let vpDx: vec3<f32> = dpdx(viewPos);
-  let vpDy: vec3<f32> = dpdy(viewPos);
-  // cross(ddx,ddy) points into the surface (–Z). Flip it so the
-  // hemisphere test checks samples IN FRONT (toward camera, +Z).
-  let normal: vec3<f32> = normalize(-cross(vpDx, vpDy));
 
   // Small per-pixel jitter to break up structured artifacts (not a full rotation).
   // A tiny position perturbation is enough to decorrelate the pattern from the
