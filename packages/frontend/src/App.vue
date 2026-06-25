@@ -40,11 +40,17 @@
         <label class="checkbox-label">
           <input type="checkbox" v-model="ssaoEnabled" /> SSAO
         </label>
+        <label>Renderer</label>
+        <select v-model="rendererType" class="renderer-select">
+          <option value="webgl2">WebGL2</option>
+          <option value="webgpu" :disabled="!webgpuAvailable" :title="!webgpuAvailable && webgpuReason ? webgpuReason : ''">WebGPU{{ webgpuAvailable ? '' : ' (unavailable)' }}</option>
+        </select>
       </div>
     </div>
     <div class="resize-handle" @mousedown="startResize" />
     <div class="viewer">
       <ModelViewer
+        :key="rendererType"
         :segbinUrl="segbinUrl"
         :rendererType="rendererType"
         :roughness="roughness"
@@ -64,7 +70,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue';
+import { ref, onBeforeUnmount } from 'vue';
 import ModelViewer from './components/ModelViewer.vue';
 
 const loading = ref(false);
@@ -90,7 +96,7 @@ if (typeof navigator === 'undefined') {
 } else {
   webgpuAvailable = true;
 }
-const rendererType = computed(() => webgpuAvailable ? 'webgpu' : 'webgl2');
+const rendererType = ref<string>(webgpuAvailable ? 'webgpu' : 'webgl2');
 log(`Renderer: ${rendererType.value}${webgpuReason ? ' (' + webgpuReason + ')' : ''}`);
 
 function fmt(ms: number | undefined): string {
@@ -295,6 +301,15 @@ html, body, #app { height: 100%; font-family: -apple-system, BlinkMacSystemFont,
   width: 100%; height: 26px; padding: 1px; border: 1px solid var(--app-border-light);
   border-radius: 3px; background: var(--app-input-bg); cursor: pointer;
   box-sizing: border-box;
+}
+.renderer-select {
+  width: 100%; padding: 5px 6px; margin-bottom: 4px;
+  border: 1px solid var(--app-border-light); border-radius: 4px;
+  background: var(--app-input-bg); color: var(--app-input-text);
+  font-size: 13px; cursor: pointer;
+}
+.renderer-select option:disabled {
+  color: var(--app-text-muted);
 }
 
 .status { margin-top: 12px; padding: 8px 12px; background: var(--app-status-bg); border-radius: 4px; color: var(--app-status-text); font-size: 14px; }
