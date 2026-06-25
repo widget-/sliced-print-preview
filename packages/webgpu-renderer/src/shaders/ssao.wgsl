@@ -3,6 +3,9 @@ struct SSAOParams {
   intensity: f32,
   bias: f32,
   power: f32,
+  near: f32,
+  far: f32,
+  fovScale: f32,
   _pad: f32,
 };
 
@@ -16,22 +19,43 @@ fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> 
   return vec4<f32>(pos[i], 0.0, 1.0);
 }
 
+fn linearizeDepth(d: f32) -> f32 {
+  // Returns view-space Z (negative for points in front of camera).
+  // Projection: proj[10] = -(far+near)/(far-near), proj[14] = -2*far*near/(far-near)
+  // depth = 0.5 * (proj[10] * viewZ + proj[14]) / (-viewZ) + 0.5
+  // → viewZ = far*near / (depth*(far-near) - far)
+  return (params.near * params.far) / (d * (params.far - params.near) - params.far);
+}
+
+fn viewSpacePos(uv: vec2<f32>, z: f32) -> vec3<f32> {
+  // Reconstruct view-space XYZ from NDC coords and view-space Z.
+  // f = 1/tan(fov/2), fovScale = 2*tan(fov/2) → f = 2/fovScale
+  let f: f32 = 2.0 / params.fovScale;
+  let aspect: f32 = screenSize.x / screenSize.y;
+  let ndc: vec2<f32> = vec2<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0));
+  let absZ: f32 = -z; // positive distance from camera
+  return vec3<f32>(ndc.x * absZ * aspect / f, ndc.y * absZ / f, z);
+}
+
 // ── SSAO fragment shader ──
-// Uses screen-space derivatives (dFdx/dFdy) to estimate normals from depth.
-// Samples 12 neighbors in a spiral pattern; checks if each is shallower.
+// Reconstructs view-space positions and uses proper geometric normals.
 @fragment
 fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0).r;
-
-  // Estimate surface normal from depth derivatives (must be in uniform control flow)
-  let dzdx: f32 = dpdx(depth);
-  let dzdy: f32 = dpdy(depth);
-
   if (depth >= 1.0) { return 1.0; }
-  let normal: vec3<f32> = normalize(vec3<f32>(-dzdx, -dzdy, 1.0));
+
+  let linDepth: f32 = linearizeDepth(depth); // view-space Z, negative
+
+  // Reconstruct view-space position and compute geometric normal
+  let uv: vec2<f32> = pos.xy / screenSize;
+  let viewPos: vec3<f32> = viewSpacePos(uv, linDepth);
+  let vpDx: vec3<f32> = dpdx(viewPos);
+  let vpDy: vec3<f32> = dpdy(viewPos);
+  // cross(ddx,ddy) points into the surface (–Z). Flip it so the
+  // hemisphere test checks samples IN FRONT (toward camera, +Z).
+  let normal: vec3<f32> = normalize(-cross(vpDx, vpDy));
 
   let Rpx: f32 = params.radius;
-  let bias: f32 = params.bias;
   let nsamp: u32 = 12u;
   var occ: f32 = 0.0;
 
@@ -43,16 +67,33 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     let cx: i32 = clamp(sx, 0, i32(screenSize.x) - 1);
     let cy: i32 = clamp(sy, 0, i32(screenSize.y) - 1);
     let sd: f32 = textureLoad(depthTex, vec2<i32>(cx, cy), 0).r;
+    if (sd >= 1.0) { continue; }
 
-    // Get the 3D vector from center to sample in (screen_x, screen_y, depth) space
-    let dx: f32 = f32(sx - i32(pos.x));
-    let dy: f32 = f32(sy - i32(pos.y));
-    let v: vec3<f32> = vec3<f32>(dx, dy, (sd - depth) * 100.0);
+    let sLinDepth: f32 = linearizeDepth(sd);
+    let sampleUV: vec2<f32> = vec2<f32>(f32(cx), f32(cy)) / screenSize;
+    let samplePos: vec3<f32> = viewSpacePos(sampleUV, sLinDepth);
 
-    // Weight by dot with normal (hemisphere check)
-    occ += max(0.0, dot(v, normal)) / (dot(v.xy, v.xy) + 0.01);
+    // 3D vector from center to sample in view space
+    let v: vec3<f32> = samplePos - viewPos;
+    let depthDiff: f32 = sLinDepth - linDepth;
+
+    // Self-occlusion prevention (reject samples in front of the surface)
+    if (depthDiff < -params.bias) { continue; }
+
+    // Smooth depth range falloff: samples beyond the occlusion radius
+    // contribute progressively less, avoiding hard-cutoff artifacts.
+    let maxDist: f32 = Rpx * (-linDepth) * params.fovScale / screenSize.y;
+    let rangeWeight: f32 = 1.0 - smoothstep(maxDist * 0.3, maxDist, depthDiff);
+
+    // Smooth distance falloff: closer samples contribute more.
+    let distSq: f32 = dot(v, v);
+    let distWeight: f32 = 1.0 / (distSq + 0.01);
+
+    // Hemisphere check × smooth falloffs
+    occ += max(0.0, dot(v, normal)) * rangeWeight * distWeight;
   }
-  occ = 1.0 - 2.0 * params.intensity / f32(nsamp) * occ;
+
+  occ = 1.0 - params.intensity * 2.0 / f32(nsamp) * occ;
   occ = pow(max(occ, 0.0), params.power);
   return occ;
 }

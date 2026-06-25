@@ -165,9 +165,9 @@ export class SlicedPipeline {
 
     // ── SSAO render pass ──
     this.ssaoMod = d.createShaderModule({ code: ssaoWgsl });
-    this.ssaoParamsBuf = d.createBuffer({ size: 20, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([4.0, 1.0, 0.005, 2.0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([2.0, 0.5, 0.01, 1.5, 0, 0, 0, 0]));
 
     // SSAO bind group layout (group 0): depth + params + screenSize
     this.ssaoBGL = d.createBindGroupLayout({
@@ -457,6 +457,12 @@ export class SlicedPipeline {
     d.set(camera.viewProj, 0);
     d[16] = camera.position[0]; d[17] = camera.position[1]; d[18] = camera.position[2];
     this.device.queue.writeBuffer(this.cameraBuf, 0, d);
+  }
+
+  /** Write camera near/far/fov into the SSAO params buffer for depth linearization. */
+  setSSAOCamera(near: number, far: number, fov: number) {
+    const fovScale = Math.tan(fov / 2) * 2;
+    this.device.queue.writeBuffer(this.ssaoParamsBuf, 16, new Float32Array([near, far, fovScale, 0]));
   }
 
   /** Create or recreate offscreen textures + bind groups at given resolution. */

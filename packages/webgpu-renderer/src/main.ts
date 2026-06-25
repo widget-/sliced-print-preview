@@ -36,6 +36,7 @@ export class WebGPURenderer implements Renderer {
     await this.pipeline.init();
 
     this.camera = new OrbitCamera();
+    this.pipeline.setSSAOCamera(this.camera.near, this.camera.far, this.camera.fov);
     this.disposeControls = this.camera.attach(canvas);
 
     this.resize();
