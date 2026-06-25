@@ -67,3 +67,21 @@ fn fs_composite(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   let o: vec4<f32> = textureLoad(compSsaoTex, vec2<i32>(pos.xy), 0);
   return vec4<f32>(c.rgb * o.r, c.a);
 }
+
+// ── Debug: display a single texture as grayscale ──
+@group(0) @binding(0) var debugTex: texture_2d<f32>;
+
+@fragment
+fn fs_debug(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  let v: vec4<f32> = textureLoad(debugTex, vec2<i32>(pos.xy), 0);
+  return vec4<f32>(v.r, v.r, v.r, 1.0);
+}
+
+// ── Debug: display a depth texture as grayscale ──
+@group(0) @binding(0) var debugDepthTex: texture_depth_2d;
+
+@fragment
+fn fs_debug_depth(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  let d: f32 = textureLoad(debugDepthTex, vec2<i32>(pos.xy), 0);
+  return vec4<f32>(d, d, d, 1.0);
+}

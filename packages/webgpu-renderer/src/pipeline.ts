@@ -81,6 +81,12 @@ export class SlicedPipeline {
   shadowPipe!: GPURenderPipeline;
   shadowMod!: GPUShaderModule;
 
+  // Debug texture preview
+  debugBGL!: GPUBindGroupLayout;
+  debugDepthBGL!: GPUBindGroupLayout;
+  debugPipe!: GPURenderPipeline;
+  debugDepthPipe!: GPURenderPipeline;
+
   material: MaterialUniforms = {
     roughness: 0.10, metalness: 0, envIntensity: 0.25,
     specularStrength: 1, ambientStrength: 0.5,
@@ -255,6 +261,34 @@ export class SlicedPipeline {
       layout: compPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
       fragment: { module: this.ssaoMod, entryPoint: 'fs_composite', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // ── Debug preview pipelines ──
+    // Float textures (offscreen color, occlusion)
+    this.debugBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+      ],
+    });
+    const debugPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugBGL] });
+    this.debugPipe = d.createRenderPipeline({
+      layout: debugPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    // Depth textures (SSAO depth, shadow map)
+    this.debugDepthBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+      ],
+    });
+    const debugDepthPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugDepthBGL] });
+    this.debugDepthPipe = d.createRenderPipeline({
+      layout: debugDepthPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -507,7 +541,36 @@ export class SlicedPipeline {
     enc.popDebugGroup();
   }
 
-  /** Composite offscreen color × SSAO to a render pass (swapchain). */
+  /** Render a debug preview of one internal texture to a render pass. */
+  renderDebugView(pass: GPURenderPassEncoder, mode: string) {
+    let view: GPUTextureView;
+    let depthMode = false;
+    switch (mode) {
+      case 'depth':
+        view = this.ssaoDepthTex.createView();
+        depthMode = true;
+        break;
+      case 'occlusion':
+        view = this.ssaoOcclusionTex.createView();
+        break;
+      case 'color':
+        view = this.offscreenColorTex.createView();
+        break;
+      case 'shadow':
+        view = this.shadowTex.createView();
+        depthMode = true;
+        break;
+      default:
+        return;
+    }
+    const bg = this.device.createBindGroup({
+      layout: depthMode ? this.debugDepthBGL : this.debugBGL,
+      entries: [{ binding: 0, resource: view }],
+    });
+    pass.setPipeline(depthMode ? this.debugDepthPipe : this.debugPipe);
+    pass.setBindGroup(0, bg);
+    pass.draw(3);
+  }
   composite(pass: GPURenderPassEncoder) {
     if (!this.compositeBG) return;
     pass.setPipeline(this.compositePipe);

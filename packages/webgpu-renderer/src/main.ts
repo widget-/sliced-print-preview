@@ -16,6 +16,8 @@ export class WebGPURenderer implements Renderer {
   /** Readable stats for the overlay. Written each frame. */
   stats = { fps: 0, triangles: 0 };
   ssaoEnabled = true;
+  /** Debug preview: show an internal texture instead of the normal composite. */
+  debugPreview: 'none' | 'depth' | 'occlusion' | 'color' | 'shadow' = 'none';
   private _statsFrames = 0;
   private _statsTime = 0;
 
@@ -249,32 +251,43 @@ export class WebGPURenderer implements Renderer {
     // Shadow map render pass (always, regardless of SSAO)
     this.pipeline.renderShadowMap(encoder);
 
-    if (this.ssaoEnabled) {
-      // Offscreen render pass (scene → offscreen color + depth32float)
-      {
-        const offPass = encoder.beginRenderPass({
-          colorAttachments: [{
-            view: this.pipeline.offscreenColorTex.createView(),
-            clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          }],
-          depthStencilAttachment: {
-            view: this.pipeline.ssaoDepthTex.createView(),
-            depthClearValue: 1.0,
-            depthLoadOp: 'clear',
-            depthStoreOp: 'store',
-          },
-        });
-        this.pipeline.drawBody(offPass);
-        this.pipeline.drawCaps(offPass);
-        offPass.end();
-      }
+    // Offscreen render pass (scene → offscreen color + depth32float)
+    {
+      const offPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.pipeline.offscreenColorTex.createView(),
+          clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+        depthStencilAttachment: {
+          view: this.pipeline.ssaoDepthTex.createView(),
+          depthClearValue: 1.0,
+          depthLoadOp: 'clear',
+          depthStoreOp: 'store',
+        },
+      });
+      this.pipeline.drawBody(offPass);
+      this.pipeline.drawCaps(offPass);
+      offPass.end();
+    }
 
-      // SSAO compute pass
-      this.pipeline.dispatchSSAO(encoder);
+    // SSAO compute pass
+    this.pipeline.dispatchSSAO(encoder);
 
-      // Composite onto swapchain
+    if (this.debugPreview !== 'none') {
+      // Debug preview: render selected texture to swapchain (scene still renders above)
+      const swapView = this.context.getCurrentTexture().createView();
+      const swapPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: swapView,
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      this.pipeline.renderDebugView(swapPass, this.debugPreview);
+      swapPass.end();
+    } else if (this.ssaoEnabled) {
       {
         const swapView = this.context.getCurrentTexture().createView();
         const swapPass = encoder.beginRenderPass({

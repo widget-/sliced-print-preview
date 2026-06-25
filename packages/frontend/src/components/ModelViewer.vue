@@ -40,6 +40,8 @@ const props = withDefaults(defineProps<{
   ambientStrength?: number;
   baseColorTint?: string;
   ssaoEnabled?: boolean;
+  /** Debug preview mode for WebGPU renderer. */
+  debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'shadow';
 }>(), {
   rendererType: 'webgl2',
   roughness: 0.10,
@@ -48,6 +50,7 @@ const props = withDefaults(defineProps<{
   specularStrength: 1.0,
   ambientStrength: 0.5,
   baseColorTint: '#e8e0d4',
+  debugPreview: 'none',
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
 
@@ -91,6 +94,8 @@ function onMaterialChange() {
 
 // Auto-apply material props when they change from the parent
 watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled], onMaterialChange);
+// Forward debugPreview to the WebGPU renderer
+watch(() => props.debugPreview, (v) => { if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none'; });
 
 let engine: Engine;
 let scene: Scene;

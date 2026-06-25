@@ -45,6 +45,14 @@
           <option value="webgl2">WebGL2</option>
           <option value="webgpu" :disabled="!webgpuAvailable" :title="!webgpuAvailable && webgpuReason ? webgpuReason : ''">WebGPU{{ webgpuAvailable ? '' : ' (unavailable)' }}</option>
         </select>
+        <label>Debug Preview</label>
+        <select v-model="debugPreview" class="renderer-select">
+          <option value="none">None</option>
+          <option value="color">Offscreen Color</option>
+          <option value="depth">Depth</option>
+          <option value="occlusion">SSAO Occlusion</option>
+          <option value="shadow">Shadow Map</option>
+        </select>
       </div>
     </div>
     <div class="resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
@@ -60,6 +68,7 @@
         :ambientStrength="ambientStrength"
         :baseColorTint="baseColorTint"
         :ssaoEnabled="ssaoEnabled"
+        :debugPreview="rendererType === 'webgpu' ? debugPreview : 'none'"
         @model-loaded="onModelLoaded"
       />
       <div v-show="!segbinUrl" class="placeholder">
@@ -97,6 +106,7 @@ if (typeof navigator === 'undefined') {
   webgpuAvailable = true;
 }
 const rendererType = ref<string>(webgpuAvailable ? 'webgpu' : 'webgl2');
+const debugPreview = ref<string>('none');
 log(`Renderer: ${rendererType.value}${webgpuReason ? ' (' + webgpuReason + ')' : ''}`);
 
 function fmt(ms: number | undefined): string {
