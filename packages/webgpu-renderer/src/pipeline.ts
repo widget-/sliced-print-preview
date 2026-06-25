@@ -7,6 +7,7 @@ import capWgsl from './shaders/cap.wgsl?raw';
 import pbrWgsl from './shaders/pbr.wgsl?raw';
 import cullWgsl from './shaders/cull.wgsl?raw';
 import ssaoWgsl from './shaders/ssao.wgsl?raw';
+import blurWgsl from './shaders/blur.wgsl?raw';
 import shadowWgsl from './shaders/shadow.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
@@ -69,6 +70,16 @@ export class SlicedPipeline {
   compositeBG!: GPUBindGroup;
   compositePipe!: GPURenderPipeline;
   offscreenFormat: GPUTextureFormat = 'rgba8unorm';
+
+  // Bilateral blur (SSAO smoothing)
+  blurMod!: GPUShaderModule;
+  blurTempTex!: GPUTexture;
+  blurBGL!: GPUBindGroupLayout;
+  blurParamsBuf!: GPUBuffer;
+  blurNearFarBuf!: GPUBuffer;
+  blurPipe!: GPURenderPipeline;
+  blurHorizBG!: GPUBindGroup;  // reads occlusion, writes temp
+  blurVertBG!: GPUBindGroup;   // reads temp, writes back
 
   // Shadow mapping
   shadowTex!: GPUTexture;
@@ -167,7 +178,7 @@ export class SlicedPipeline {
     this.ssaoMod = d.createShaderModule({ code: ssaoWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([2.0, 0.5, 0.01, 1.5, 0, 0, 0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.25, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
 
     // SSAO bind group layout (group 0): depth + params + screenSize
     this.ssaoBGL = d.createBindGroupLayout({
@@ -289,6 +300,26 @@ export class SlicedPipeline {
       layout: debugDepthPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
       fragment: { module: this.ssaoMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // ── Bilateral blur pipeline ──
+    this.blurMod = d.createShaderModule({ code: blurWgsl });
+    this.blurBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.blurParamsBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.blurNearFarBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const blurPL = d.createPipelineLayout({ bindGroupLayouts: [this.blurBGL] });
+    this.blurPipe = d.createRenderPipeline({
+      layout: blurPL,
+      vertex: { module: this.blurMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.blurMod, entryPoint: 'fs_blur', targets: [{ format: 'r32float' }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -463,6 +494,7 @@ export class SlicedPipeline {
   setSSAOCamera(near: number, far: number, fov: number) {
     const fovScale = Math.tan(fov / 2) * 2;
     this.device.queue.writeBuffer(this.ssaoParamsBuf, 16, new Float32Array([near, far, fovScale, 0]));
+    this.device.queue.writeBuffer(this.blurNearFarBuf, 0, new Float32Array([near, far]));
   }
 
   /** Create or recreate offscreen textures + bind groups at given resolution. */
@@ -470,7 +502,7 @@ export class SlicedPipeline {
     if (w === this.ssaoWidth && h === this.ssaoHeight) return;
     const d = this.device;
     // Destroy old textures
-    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
 
     this.offscreenColorTex = d.createTexture({
       size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -479,6 +511,9 @@ export class SlicedPipeline {
       size: [w, h], format: 'depth32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.ssaoOcclusionTex = d.createTexture({
+      size: [w, h], format: 'r32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.blurTempTex = d.createTexture({
       size: [w, h], format: 'r32float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
 
@@ -506,6 +541,26 @@ export class SlicedPipeline {
 
     this.ssaoWidth = w;
     this.ssaoHeight = h;
+
+    // Blur bind groups: horizontal (occlusion→temp) and vertical (temp→occlusion)
+    this.blurHorizBG = d.createBindGroup({
+      layout: this.blurBGL,
+      entries: [
+        { binding: 0, resource: this.ssaoOcclusionTex.createView() },
+        { binding: 1, resource: this.ssaoDepthTex.createView() },
+        { binding: 2, resource: { buffer: this.blurParamsBuf } },
+        { binding: 3, resource: { buffer: this.blurNearFarBuf } },
+      ],
+    });
+    this.blurVertBG = d.createBindGroup({
+      layout: this.blurBGL,
+      entries: [
+        { binding: 0, resource: this.blurTempTex.createView() },
+        { binding: 1, resource: this.ssaoDepthTex.createView() },
+        { binding: 2, resource: { buffer: this.blurParamsBuf } },
+        { binding: 3, resource: { buffer: this.blurNearFarBuf } },
+      ],
+    });
   }
 
   /** Render SSAO to occlusion texture. */
@@ -524,7 +579,43 @@ export class SlicedPipeline {
     pass.end();
   }
 
-  /** Render shadow map (depth-only from light POV). */
+  /** Bilateral blur the occlusion texture (2-pass separable). */
+  dispatchBlur(enc: GPUCommandEncoder) {
+    if (!this.ssaoWidth || !this.ssaoHeight) return;
+    const d = this.device;
+
+    // Horizontal pass: read occlusion → write temp
+    d.queue.writeBuffer(this.blurParamsBuf, 0, new Float32Array([1, 0, this.ssaoWidth, this.ssaoHeight]));
+    {
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: this.blurTempTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(this.blurPipe);
+      pass.setBindGroup(0, this.blurHorizBG);
+      pass.draw(3);
+      pass.end();
+    }
+
+    // Vertical pass: read temp → write back to occlusion
+    d.queue.writeBuffer(this.blurParamsBuf, 0, new Float32Array([0, 1, this.ssaoWidth, this.ssaoHeight]));
+    {
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: this.ssaoOcclusionTex.createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(this.blurPipe);
+      pass.setBindGroup(0, this.blurVertBG);
+      pass.draw(3);
+      pass.end();
+    }
+  }  /** Render shadow map (depth-only from light POV). */
   renderShadowMap(enc: GPUCommandEncoder) {
     if (!this.segmentBuffers) return;
     enc.pushDebugGroup('shadow-map');
@@ -595,7 +686,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();
-    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
     this.shadowTex?.destroy();
     this.shadowVPBuf?.destroy();

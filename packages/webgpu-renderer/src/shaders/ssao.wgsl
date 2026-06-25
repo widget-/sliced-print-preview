@@ -12,6 +12,7 @@ struct SSAOParams {
 @group(0) @binding(0) var depthTex: texture_2d<f32>;
 @group(0) @binding(1) var<uniform> params: SSAOParams;
 @group(0) @binding(2) var<uniform> screenSize: vec2<f32>;
+@group(0) @binding(3) var noiseTex: texture_2d<f32>;
 
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -55,15 +56,27 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   // hemisphere test checks samples IN FRONT (toward camera, +Z).
   let normal: vec3<f32> = normalize(-cross(vpDx, vpDy));
 
-  let Rpx: f32 = params.radius;
+  // Small per-pixel jitter to break up structured artifacts (not a full rotation).
+  // A tiny position perturbation is enough to decorrelate the pattern from the
+  // geometry without creating visible noise or block structure.
+  let ph: u32 = u32(pos.x) * 374761393u + u32(pos.y) * 668265263u;
+  let ph2: u32 = ph ^ (ph >> 13u);
+  let ph3: u32 = ph2 * 1274126177u;
+  let jitter: vec2<f32> = (vec2<f32>(f32(ph3 & 0xFFFFu), f32((ph3 >> 16u) & 0xFFFFu)) / 65535.0 - 0.5) * 0.6;
+
+  let pixelScale: f32 = (-linDepth) * params.fovScale / screenSize.y;
+  let Rpx: f32 = params.radius / pixelScale; // world radius → pixel radius at this depth
+  let maxDist: f32 = params.radius; // world-space range check (constant regardless of zoom)
   let nsamp: u32 = 12u;
   var occ: f32 = 0.0;
 
   for (var s: u32 = 0u; s < nsamp; s++) {
     let a: f32 = f32(s) * 6.28318 / f32(nsamp);
     let r: f32 = (f32(s) + 1.0) / f32(nsamp) * Rpx;
-    let sx: i32 = i32(pos.x) + i32(cos(a) * r);
-    let sy: i32 = i32(pos.y) + i32(sin(a) * r);
+    let base: vec2<f32> = vec2<f32>(cos(a) * r, sin(a) * r);
+    // Tiny per-pixel jitter to break up structured artifacts
+    let sx: i32 = i32(pos.x + base.x + jitter.x);
+    let sy: i32 = i32(pos.y + base.y + jitter.y);
     let cx: i32 = clamp(sx, 0, i32(screenSize.x) - 1);
     let cy: i32 = clamp(sy, 0, i32(screenSize.y) - 1);
     let sd: f32 = textureLoad(depthTex, vec2<i32>(cx, cy), 0).r;
@@ -80,9 +93,7 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     // Self-occlusion prevention (reject samples in front of the surface)
     if (depthDiff < -params.bias) { continue; }
 
-    // Smooth depth range falloff: samples beyond the occlusion radius
-    // contribute progressively less, avoiding hard-cutoff artifacts.
-    let maxDist: f32 = Rpx * (-linDepth) * params.fovScale / screenSize.y;
+    // Smooth depth range falloff (world-space, constant at all zoom levels)
     let rangeWeight: f32 = 1.0 - smoothstep(maxDist * 0.3, maxDist, depthDiff);
 
     // Smooth distance falloff: closer samples contribute more.
@@ -109,7 +120,6 @@ fn fs_composite(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   return vec4<f32>(c.rgb * o.r, c.a);
 }
 
-// ── Debug: display a single texture as grayscale ──
 @group(0) @binding(0) var debugTex: texture_2d<f32>;
 
 @fragment

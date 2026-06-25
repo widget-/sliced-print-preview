@@ -276,6 +276,9 @@ export class WebGPURenderer implements Renderer {
     // SSAO compute pass
     this.pipeline.dispatchSSAO(encoder);
 
+    // Bilateral blur to smooth the per-face faceted look
+    this.pipeline.dispatchBlur(encoder);
+
     if (this.debugPreview !== 'none') {
       // Debug preview: render selected texture to swapchain (scene still renders above)
       const swapView = this.context.getCurrentTexture().createView();
