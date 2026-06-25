@@ -49,6 +49,7 @@
         <select v-model="debugPreview" class="renderer-select">
           <option value="none">None</option>
           <option value="color">Offscreen Color</option>
+          <option value="normal">Normals</option>
           <option value="depth">Depth</option>
           <option value="occlusion">SSAO Occlusion</option>
           <option value="shadow">Shadow Map</option>

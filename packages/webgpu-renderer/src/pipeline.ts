@@ -660,6 +660,9 @@ export class SlicedPipeline {
       case 'color':
         view = this.offscreenColorTex.createView();
         break;
+      case 'normal':
+        view = this.normalTex.createView();
+        break;
       case 'shadow':
         view = this.shadowTex.createView();
         depthMode = true;
