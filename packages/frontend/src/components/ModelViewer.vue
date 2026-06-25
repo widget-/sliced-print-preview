@@ -157,10 +157,20 @@ async function loadEnvMap() {
 function resize() {
   if (webgpuRenderer) { webgpuRenderer.resize(); return; }
   if (!container.value || disposed) return;
+  if (!engine) return; // not initialized yet
   const { clientWidth, clientHeight } = container.value;
   if (clientWidth === 0 || clientHeight === 0) return;
   engine.resize();
 }
+
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  if (container.value) {
+    resizeObserver = new ResizeObserver(() => resize());
+    resizeObserver.observe(container.value);
+  }
+});
 
 async function loadSegbinModel(url: string) {
   log(`Loading segbin: ${url}`);
@@ -437,7 +447,6 @@ onMounted(() => {
     window.addEventListener('keydown', (e) => {
       if (e.key === '`') { stats.value.show = !stats.value.show; }
     });
-    window.addEventListener('resize', resize);
     statsTime = performance.now();
 
     engine.runRenderLoop(renderFrame);
@@ -473,6 +482,7 @@ watch(
 onBeforeUnmount(() => {
   log('Disposing');
   disposed = true;
+  resizeObserver?.disconnect();
   if (webgpuRenderer) { webgpuRenderer.dispose(); webgpuRenderer = null; clearInterval(webgpuStatsTimer); return; }
   engine.stopRenderLoop();
   taaPipeline?.dispose();
