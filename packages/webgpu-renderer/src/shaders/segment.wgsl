@@ -98,6 +98,6 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);
   out.worldPos = worldPos;
   out.worldNormal = worldNormal;
-  out.color = segColor * material.baseColorTint;
+  out.color = mix(material.baseColorTint, segColor * material.baseColorTint, material.useRoleColors);
   return out;
 }

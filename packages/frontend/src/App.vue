@@ -34,13 +34,16 @@
         </select>
         <SliderControl label="Specular" v-model="specularStrength" :max="1" :step="0.01" />
         <SliderControl label="Ambient" v-model="ambientStrength" :max="2" :step="0.01" />
+        <label class="checkbox-label">
+          <input type="checkbox" v-model="roleColors" /> Role Colors
+        </label>
         <h4>Lighting</h4>
         <SliderControl label="Key Light" v-model="keyLightIntensity" :max="3" :step="0.01" :decimals="1" />
         <SliderControl label="Fill Light" v-model="fillLightIntensity" :max="3" :step="0.01" :decimals="1" />
         <SliderControl label="Shadow Softness" v-model="shadowSoftness" :min="0.5" :max="6" :step="0.1" :decimals="1" />
         <SliderControl label="Contact Shadows" v-model="contactShadowStrength" :max="1" :step="0.01" />
-        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="5" :step="0.01" :decimals="2" />
-        <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="2" :step="0.01" />
+        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="0.5" :step="0.001" :decimals="3" />
+        <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="5" :step="0.01" />
         <label>Color</label>
         <input type="color" v-model="baseColorTint" class="color-picker" />
         <label class="checkbox-label">
@@ -86,6 +89,7 @@
         :baseColorTint="baseColorTint"
         :envMapUrl="envMapUrl"
         :ssaoEnabled="ssaoEnabled"
+        :roleColors="roleColors"
         :shadowSoftness="shadowSoftness"
         :keyLightIntensity="keyLightIntensity"
         :fillLightIntensity="fillLightIntensity"
@@ -113,19 +117,20 @@ const error = ref('');
 const segbinUrl = ref<string | null>(null);
 const timing = ref<{ api?: number; model?: number; slice?: number; parse?: number; ray?: number; segBvh?: number; gap?: number; arc?: number; total?: number }>({});
 
-const roughness = ref(0.10);
+const roughness = ref(0.65);
 const metalness = ref(0.0);
 const envIntensity = ref(1.0);
 const specularStrength = ref(1.0);
 const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');
 const ssaoEnabled = ref(true);
+const roleColors = ref(true);
 const shadowSoftness = ref(2.0);
 const keyLightIntensity = ref(1.0);
 const fillLightIntensity = ref(0.4);
-const contactShadowDist = ref(2.0);
-const contactShadowStrength = ref(1.0);
-const ssaoIntensity = ref(0.8);
+const contactShadowDist = ref(0.05);
+const contactShadowStrength = ref(0.5);
+const ssaoIntensity = ref(3.0);
 const ssaoRadius = ref(0.06);
 const envMapUrl = ref('ferndale_studio_07_1k.hdr');
 const envMapFiles = [

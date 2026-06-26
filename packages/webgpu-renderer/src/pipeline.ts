@@ -166,9 +166,10 @@ export class SlicedPipeline {
   groundShadowPipe!: GPURenderPipeline;
 
   material: MaterialUniforms = {
-    roughness: 0.10, metalness: 0, envIntensity: 1.0,
+    roughness: 0.65, metalness: 0, envIntensity: 1.0,
     specularStrength: 1, ambientStrength: 0.5,
     baseColorTint: [1, 0.878, 0.831],
+    useRoleColors: 1,
   };
   lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
   lightDir2: [number, number, number, number] = [-0.3, -0.2, 0.9, 0.4];
@@ -176,13 +177,13 @@ export class SlicedPipeline {
   /** Shadow PCF kernel radius multiplier (1=1 texel, 2=2 texels, etc). */
   shadowSoftness = 2.0;
   /** Contact shadow ray max distance in world units. */
-  contactShadowDist = 2.0;
+  contactShadowDist = 0.05;
   /** Contact shadow visibility strength (0=off, 1=full). */
-  contactShadowStrength = 1.0;
+  contactShadowStrength = 0.5;
   /** SSAO sampling radius. */
   ssaoRadius = 0.06;
   /** SSAO occlusion intensity. */
-  ssaoIntensity = 0.8;
+  ssaoIntensity = 3.0;
 
   constructor(device: GPUDevice) { this.device = device; }
 
@@ -260,7 +261,7 @@ export class SlicedPipeline {
     const ssaoMainMod = d.createShaderModule({ code: ssaoMainWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.8, 0.01, 1.5, 0, 0, 0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 3.0, 0.01, 1.5, 0, 0, 0, 0]));
     this.ssaoProjBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     // Cosine-weighted hemisphere kernel: 32 samples.
@@ -819,18 +820,16 @@ export class SlicedPipeline {
     this.device.queue.writeBuffer(this.materialBuf, 0, new Float32Array([
       m.roughness, m.metalness, m.envIntensity, m.specularStrength, m.ambientStrength,
       0, 0, 0,
-      m.baseColorTint[0], m.baseColorTint[1], m.baseColorTint[2], 0,
+      m.baseColorTint[0], m.baseColorTint[1], m.baseColorTint[2], m.useRoleColors ?? 1,
     ]));
   }
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
   writeLightDir2UBO() { this.device.queue.writeBuffer(this.lightDir2Buf, 0, new Float32Array(this.lightDir2)); }
   writeShadowSoftness() { this.device.queue.writeBuffer(this.shadowParamsBuf, 0, new Float32Array([this.shadowSoftness, 0, 0, 0])); }
-  /** Write SSAO params buffer (radius, intensity, bias, power). */
+  /** Write SSAO params buffer (radius, intensity, bias, power). Leaves camera params at offset 16 intact. */
   writeSSAOParams() {
-    const d = new Float32Array(8);
-    d[0] = this.ssaoRadius; d[1] = this.ssaoIntensity; d[2] = 0.01; d[3] = 1.5;
-    const b = this.ssaoParamsBuf as GPUBuffer;
-    this.device.queue.writeBuffer(b, 0, d);
+    const d = new Float32Array([this.ssaoRadius, this.ssaoIntensity, 0.01, 1.5]);
+    this.device.queue.writeBuffer(this.ssaoParamsBuf, 0, d);
   }
 
   /** Reload the IBL environment map from a new HDRI. Re-generates cubemap, irradiance, prefilter, BRDF LUT. */
@@ -1177,10 +1176,10 @@ export class SlicedPipeline {
   }
 
   /** Write contact shadow uniform buffer (invViewProj + viewProj + lightDir + params). */
-  writeContactShadow(camera: OrbitCamera, lightDir: [number,number,number,number]) {
+  writeContactShadow(viewProj: Float32Array, invViewProj: Float32Array, lightDir: [number,number,number,number]) {
     const d = new Float32Array(48); // 16+16+4+4 = 40 floats, padded
-    d.set(camera.invViewProj, 0);
-    d.set(camera.viewProj, 16);
+    d.set(invViewProj, 0);
+    d.set(viewProj, 16);
     d[32] = lightDir[0]; d[33] = lightDir[1]; d[34] = lightDir[2]; d[35] = this.contactShadowStrength;
     d[36] = this.contactShadowDist;   // maxDist
     d[37] = 32;     // stepCount

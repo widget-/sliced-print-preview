@@ -40,6 +40,7 @@ const props = withDefaults(defineProps<{
   ambientStrength?: number;
   baseColorTint?: string;
   ssaoEnabled?: boolean;
+  roleColors?: boolean;
   shadowSoftness?: number;
   keyLightIntensity?: number;
   fillLightIntensity?: number;
@@ -52,7 +53,7 @@ const props = withDefaults(defineProps<{
   envMapUrl?: string;
 }>(), {
   rendererType: 'webgl2',
-  roughness: 0.10,
+  roughness: 0.65,
   metalness: 0.0,
   envIntensity: 1.0,
   specularStrength: 1.0,
@@ -63,9 +64,9 @@ const props = withDefaults(defineProps<{
   shadowSoftness: 2.0,
   keyLightIntensity: 1.0,
   fillLightIntensity: 0.4,
-  contactShadowDist: 2.0,
-  contactShadowStrength: 1.0,
-  ssaoIntensity: 0.8,
+  contactShadowDist: 0.05,
+  contactShadowStrength: 0.5,
+  ssaoIntensity: 3.0,
   ssaoRadius: 0.06,
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
@@ -94,6 +95,8 @@ function onMaterialChange() {
       baseColorTint: props.baseColorTint,
     });
     webgpuRenderer.ssaoEnabled = props.ssaoEnabled !== false;
+    webgpuRenderer.pipeline.material.useRoleColors = props.roleColors !== false ? 1 : 0;
+    webgpuRenderer.pipeline.writeMaterialUBO();
     webgpuRenderer.setShadowSoftness?.(props.shadowSoftness ?? 2.0);
     webgpuRenderer.setKeyLightIntensity?.(props.keyLightIntensity ?? 1.0);
     webgpuRenderer.setFillLightIntensity?.(props.fillLightIntensity ?? 0.4);
@@ -116,7 +119,7 @@ function onMaterialChange() {
 }
 
 // Auto-apply material props when they change from the parent
-watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled, props.shadowSoftness, props.keyLightIntensity, props.fillLightIntensity, props.contactShadowDist, props.contactShadowStrength, props.ssaoIntensity, props.ssaoRadius], onMaterialChange);
+watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled, props.roleColors, props.shadowSoftness, props.keyLightIntensity, props.fillLightIntensity, props.contactShadowDist, props.contactShadowStrength, props.ssaoIntensity, props.ssaoRadius], onMaterialChange);
 // Forward debugPreview to the WebGPU renderer
 watch(() => props.debugPreview, (v) => { if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none'; });
 // Reload env map when the user picks a different HDRI
@@ -426,6 +429,8 @@ onMounted(() => {
         if (renderer.ssaoEnabled !== undefined) {
           renderer.ssaoEnabled = props.ssaoEnabled !== false;
         }
+        renderer.pipeline.material.useRoleColors = props.roleColors !== false ? 1 : 0;
+        renderer.pipeline.writeMaterialUBO();
         if (props.shadowSoftness !== undefined) renderer.setShadowSoftness?.(props.shadowSoftness);
         if (props.keyLightIntensity !== undefined) renderer.setKeyLightIntensity?.(props.keyLightIntensity);
         if (props.fillLightIntensity !== undefined) renderer.setFillLightIntensity?.(props.fillLightIntensity);

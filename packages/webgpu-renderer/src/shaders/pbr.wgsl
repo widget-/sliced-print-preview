@@ -125,7 +125,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
   let prefilteredHi: vec3<f32> = textureSampleLevel(prefilterMap, iblSampler, R, lodHi).rgb;
   let prefiltered: vec3<f32> = mix(prefilteredLo, prefilteredHi, lodFrac);
   let brdf: vec2<f32> = textureSample(brdfLUT, iblSampler, vec2<f32>(NdotV, material.roughness)).rg;
-  let specularIBL: vec3<f32> = prefiltered * (f0 * brdf.x + brdf.y) * material.envIntensity;
+  let specularIBL: vec3<f32> = prefiltered * (f0 * brdf.x + brdf.y) * material.envIntensity * max(1.0 - material.roughness, 0.0);
 
   let ambientIBL: vec3<f32> = (diffuseIBL + specularIBL) * material.ambientStrength;
 
