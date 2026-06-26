@@ -100,9 +100,9 @@ watch(() => [props.roughness, props.metalness, props.envIntensity, props.specula
 watch(() => props.debugPreview, (v) => { if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none'; });
 // Reload env map when the user picks a different HDRI
 watch(() => props.envMapUrl, (url) => {
-  if (webgpuRenderer) {
+  if (webgpuRenderer && typeof webgpuRenderer.setEnvMap === 'function') {
     webgpuRenderer.setEnvMap(url);
-  } else {
+  } else if (!webgpuRenderer) {
     loadEnvMap(url);
   }
 });
