@@ -23,15 +23,42 @@ export class WebGPURenderer implements Renderer {
   private _mounted = false;
   private _statsFrames = 0;
   private _statsTime = 0;
+  private _debugFrames = 0;
+  private _lastFrameTime = 0;
+  private _timingAfterLoad = 0;
+  private _minFrameInterval = 1000 / 60;
+  private _querySet?: GPUQuerySet;
+  private _queryResolveBuf?: GPUBuffer;
+  private _queryResultBuf?: GPUBuffer;
+  private _gpuTiming = false;
 
   async mount(_container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
     if (!canvas) throw new Error('Canvas element is null — mount called before DOM ready');
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error('No WebGPU adapter');
-    const device = await adapter.requestDevice();
+    const hasTimestamp = adapter.features?.has?.('timestamp-query');
+    if (hasTimestamp) console.log('✅ GPU timestamp-query supported');
+    const device = await adapter.requestDevice({
+      requiredFeatures: hasTimestamp ? ['timestamp-query'] : [],
+    });
     this.device = device;
     // Relay WebGPU validation errors to the dev server console
     ;(window as any).__relayGPUError?.(device);
+
+    // Set up GPU timestamp queries (requires chrome://flags/#enable-webgpu-developer-features)
+    if (hasTimestamp) {
+      const qCount = 8;
+      this._querySet = device.createQuerySet({ type: 'timestamp', count: qCount });
+      this._queryResolveBuf = device.createBuffer({
+        size: qCount * 8,
+        usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+      });
+      this._queryResultBuf = device.createBuffer({
+        size: qCount * 8,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+      this._gpuTiming = true;
+    }
 
     const context = canvas.getContext('webgpu') as GPUCanvasContext;
     const format = navigator.gpu.getPreferredCanvasFormat();
@@ -181,8 +208,12 @@ export class WebGPURenderer implements Renderer {
     }
     this.device.queue.writeBuffer(this.pipeline.shadowVPBuf, 0, svp);
 
+    this.triggerGPUTiming();
     return Math.round(performance.now() - t0);
   }
+
+  /** Schedule a GPU timing capture on the second frame after this call. */
+  triggerGPUTiming() { this._timingAfterLoad = this._debugFrames; }
 
   setMaterial(props: MaterialProps): void {
     this.pipeline.material.roughness = props.roughness;
@@ -239,6 +270,18 @@ export class WebGPURenderer implements Renderer {
 
   private _loop = () => {
     if (this.disposed) return;
+    const now = performance.now();
+    if (now - this._lastFrameTime < this._minFrameInterval && this._lastFrameTime > 0) {
+      requestAnimationFrame(this._loop);
+      return;
+    }
+    if (this._lastFrameTime > 0) {
+      const dt = now - this._lastFrameTime;
+      const isTimingFrame = this._debugFrames === 1 || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1);
+      if (isTimingFrame) console.log(`frame interval: ${dt.toFixed(2)} ms (${(1000/dt).toFixed(1)} FPS)`);
+    }
+    this._lastFrameTime = now;
+    this._debugFrames++;
     const canvas = this.context.canvas as HTMLCanvasElement;
     const w = canvas.width;
     const h = canvas.height;
@@ -271,9 +314,6 @@ export class WebGPURenderer implements Renderer {
     }
     this.pipeline.writeCameraUBO(this.camera);
 
-    // Ensure SSAO textures are sized for current viewport
-    this.pipeline.resizeSSAO(w, h);
-
     // LOD culling compute pass (submits its own encoder)
     this.pipeline.resetIndirect();
     this.pipeline.dispatchCull(h);
@@ -282,6 +322,8 @@ export class WebGPURenderer implements Renderer {
 
     // Shadow map render pass (always, regardless of SSAO)
     this.pipeline.renderShadowMap(encoder);
+
+    if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 0);
 
     // Offscreen render pass (scene → offscreen color + depth32float)
     {
@@ -314,8 +356,11 @@ export class WebGPURenderer implements Renderer {
 
     // SSAO compute pass + blur (only when enabled)
     if (this.ssaoEnabled) {
+      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 1);
       this.pipeline.dispatchSSAO(encoder);
+      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 2);
       this.pipeline.dispatchBlur(encoder);
+      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 3);
     }
 
     // ── Present to swapchain ──
@@ -349,16 +394,39 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
+    if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 4);
 
     this.device.queue.submit([encoder.finish()]);
 
-    // FPS tracking
+    // Read back GPU timestamps on second frame after mount or after model load
+    const doTiming = this._debugFrames === 1 || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1);
+    if (this._gpuTiming && doTiming) {
+      const qs = this._querySet!;
+      const rb = this._queryResolveBuf!;
+      const rb2 = this._queryResultBuf!;
+      const re = this.device.createCommandEncoder();
+      re.resolveQuerySet(qs, 0, 5, rb, 0);
+      re.copyBufferToBuffer(rb, 0, rb2, 0, 5 * 8);
+      this.device.queue.submit([re.finish()]);
+      rb2.mapAsync(GPUMapMode.READ).then(() => {
+        const arr = new BigInt64Array(rb2.getMappedRange());
+        const labels = ['offscreen', 'ssao-start', 'blur-start', 'composite-start', 'frame-end'];
+        for (let i = 0; i < 4; i++) {
+          if (arr[i] === 0n || arr[i+1] === 0n) continue;
+          const ns = Number(arr[i+1] - arr[i]);
+          console.log(`  GPU [${labels[i]}→${labels[i+1]}]: ${(ns / 1e6).toFixed(3)} ms`);
+        }
+        rb2.unmap();
+      });
+    }
+
+    // FPS tracking (skip the expensive readback every frame — do it every 60 frames)
     this._statsFrames++;
-    const now = performance.now();
-    if (now - this._statsTime >= 1000) {
-      this.stats.fps = Math.round(this._statsFrames / ((now - this._statsTime) / 1000));
+    const now2 = performance.now();
+    if (now2 - this._statsTime >= 1000) {
+      this.stats.fps = Math.round(this._statsFrames / ((now2 - this._statsTime) / 1000));
       this._statsFrames = 0;
-      this._statsTime = now;
+      this._statsTime = now2;
 
       // Read LOD counters for triangle count
       const rb = this.device.createBuffer({
@@ -367,6 +435,9 @@ export class WebGPURenderer implements Renderer {
       });
       const re = this.device.createCommandEncoder();
       re.copyBufferToBuffer(this.pipeline.lodCountersBuf, 0, rb, 0, 12);
+      if (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1) {
+        console.log('--- GPU timings after model load ---');
+      }
       this.device.queue.submit([re.finish()]);
       rb.mapAsync(GPUMapMode.READ).then(() => {
         const v = new Uint32Array(rb.getMappedRange());
