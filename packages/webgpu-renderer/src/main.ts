@@ -1,4 +1,5 @@
 import './style.css';
+import './console-relay';
 import type { MaterialProps, Renderer, ScreenshotHooks } from '@sliced/shared';
 import { loadSegbin } from '@sliced/shared';
 import { SlicedPipeline } from './pipeline';
