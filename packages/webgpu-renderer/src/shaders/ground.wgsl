@@ -66,6 +66,61 @@ fn fs_ground_shadow() {}
 @group(1) @binding(1) var shadowSampler: sampler_comparison;
 @group(1) @binding(2) var<uniform> shadowVP: mat4x4<f32>;
 
+// ── group(3): Secondary (fill) light shadow ──
+@group(3) @binding(0) var shadowTex2: texture_depth_2d;
+@group(3) @binding(1) var shadowSampler2: sampler_comparison;
+@group(3) @binding(2) var<uniform> shadowVP2: mat4x4<f32>;
+
+// ── Shadow helpers (PCF — rotated Vogel disk + receiver-plane bias) ──
+
+fn interleavedGradientNoise(pos: vec2<f32>) -> f32 {
+  return fract(52.9829189 * fract(dot(pos, vec2<f32>(0.06711056, 0.00583715))));
+}
+
+fn vogelDiskSample(index: u32, count: u32, phi: f32) -> vec2<f32> {
+  let goldenAngle: f32 = 2.399963229728653;
+  let r: f32 = sqrt((f32(index) + 0.5) / f32(count));
+  let theta: f32 = f32(index) * goldenAngle + phi;
+  return vec2<f32>(cos(theta), sin(theta)) * r;
+}
+
+fn computeReceiverPlaneDepthBias(p: vec3<f32>) -> vec2<f32> {
+  let duvz_dx = dpdx(p);
+  let duvz_dy = dpdy(p);
+  let inv_det = 1.0 / (duvz_dx.x * duvz_dy.y - duvz_dx.y * duvz_dy.x);
+  return vec2<f32>(
+    duvz_dy.y * duvz_dx.z - duvz_dx.y * duvz_dy.z,
+    duvz_dx.x * duvz_dy.z - duvz_dy.x * duvz_dx.z
+  ) * inv_det;
+}
+
+fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x4<f32>, worldPos: vec3<f32>, clipPos: vec4<f32>) -> f32 {
+  let shadowClip: vec4<f32> = vp * vec4<f32>(worldPos, 1.0);
+  let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
+  let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
+
+  let inFrustum: bool = all(shadowUV == clamp(shadowUV, vec2<f32>(0.0), vec2<f32>(1.0)))
+                     && shadowNDC.z >= 0.0 && shadowNDC.z <= 1.0;
+
+  let dz_duv: vec2<f32> = computeReceiverPlaneDepthBias(shadowNDC);
+
+  var vis: f32 = 1.0;
+  if (inFrustum) {
+    let texelSize: f32 = 1.0 / 1024.0;
+    let phi: f32 = interleavedGradientNoise(clipPos.xy) * 6.283185307;
+    var sum: f32 = 0.0;
+    for (var i: u32 = 0u; i < 12u; i++) {
+      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * texelSize * 2.0;
+      let uv: vec2<f32> = clamp(shadowUV + offset, vec2<f32>(0.0), vec2<f32>(1.0));
+      let perSampleBias: f32 = dot(dz_duv, offset);
+      let refZ: f32 = clamp(shadowNDC.z + perSampleBias, 0.0, 1.0);
+      sum += textureSampleCompareLevel(tex, smp, uv, refZ);
+    }
+    vis = sum / 12.0;
+  }
+  return vis;
+}
+
 struct FragOut {
   @location(0) color: vec4<f32>,
   @location(1) normal: vec4<f32>,
@@ -76,28 +131,21 @@ fn fs_ground(in: VSOut) -> FragOut {
   // Ground color (subtle warm gray, like a concrete studio floor)
   let groundColor: vec3<f32> = vec3<f32>(0.35, 0.33, 0.30);
 
-  // Shadow map lookup (same PCF 5×5 as pbr.wgsl)
-  let shadowClip: vec4<f32> = shadowVP * vec4<f32>(in.worldPos, 1.0);
-  let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
-  let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
-  let texel: f32 = 1.0 / 1024.0;
-  let bias: f32 = 0.002;
-  var shadowVis: f32 = 0.0;
-  for (var dy: i32 = -2; dy <= 2; dy++) {
-    for (var dx: i32 = -2; dx <= 2; dx++) {
-      let uv: vec2<f32> = shadowUV + vec2<f32>(f32(dx), f32(dy)) * texel;
-      shadowVis += textureSampleCompareLevel(shadowTex, shadowSampler, uv, shadowNDC.z - bias);
-    }
-  }
-  shadowVis /= 25.0;
+  // Shadow from both lights
+  let shadowVis1: f32 = computeGroundShadow(shadowTex, shadowSampler, shadowVP, in.worldPos, in.clipPos);
+  let shadowVis2: f32 = computeGroundShadow(shadowTex2, shadowSampler2, shadowVP2, in.worldPos, in.clipPos);
 
-  // Ambient fill: soften the shadow so the ground isn't pure black in shadow
+  // Combined shadow visibility with ambient fill (both lights)
   let ambientFill: f32 = 0.15;
-  let lit: f32 = max(ambientFill, shadowVis);
+  let shadowCombined: f32 = min(shadowVis1, shadowVis2);
+  let lit: f32 = max(ambientFill, shadowCombined);
 
   // Write a normal facing +Z (upward) so SSAO at the ground/model boundary is consistent
   let worldN: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
   let viewN: vec3<f32> = (camera.viewMat * vec4<f32>(worldN, 0.0)).xyz;
+
+  // DEBUG: uncomment to see shadowNDC.z as grayscale (near=0 black, far=1 white)
+  // return FragOut(vec4<f32>(shadowNDC.z, shadowNDC.z, shadowNDC.z, 1.0), vec4<f32>(viewN * 0.5 + 0.5, 1.0));
 
   return FragOut(vec4<f32>(groundColor * lit, 1.0), vec4<f32>(viewN * 0.5 + 0.5, 1.0));
 }

@@ -71,6 +71,15 @@ struct SegmentData {
 @group(2) @binding(2) var brdfLUT: texture_2d<f32>;          // 512×512, rg16float, split-sum scale(R)/bias(G)
 @group(2) @binding(3) var iblSampler: sampler;                // magFilter=linear, minFilter=linear, no compare
 
+// ── group(3): Secondary light (fill) shadow + direction ──
+// Front-right-up fill light, dimmer than the primary key light.
+// Uses the same comparison sampler (shared from group(1)).
+
+@group(3) @binding(0) var shadowTex2: texture_depth_2d;
+@group(3) @binding(1) var shadowSampler2: sampler_comparison;
+@group(3) @binding(2) var<uniform> shadowVP2: mat4x4<f32>;
+@group(3) @binding(3) var<uniform> lightDir2: vec4<f32>;
+
 // ── Vertex input/output ──
 // Vertex buffers are interleaved (pos+normal), 24 bytes per vertex.
 // worldPos and worldNormal are computed in the vertex shader (segment.wgsl / cap.wgsl).
