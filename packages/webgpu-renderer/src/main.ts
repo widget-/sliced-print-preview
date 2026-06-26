@@ -323,7 +323,7 @@ export class WebGPURenderer implements Renderer {
     // Shadow map render pass (always, regardless of SSAO)
     this.pipeline.renderShadowMap(encoder);
 
-    if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 0);
+    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 0); } catch(e) { this._gpuTiming = false; }
 
     // Offscreen render pass (scene → offscreen color + depth32float)
     {
@@ -356,11 +356,11 @@ export class WebGPURenderer implements Renderer {
 
     // SSAO compute pass + blur (only when enabled)
     if (this.ssaoEnabled) {
-      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 1);
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 1); } catch(e) {}
       this.pipeline.dispatchSSAO(encoder);
-      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 2);
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 2); } catch(e) {}
       this.pipeline.dispatchBlur(encoder);
-      if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 3);
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 3); } catch(e) {}
     }
 
     // ── Present to swapchain ──
@@ -394,7 +394,7 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
-    if (this._gpuTiming) (encoder as any).writeTimestamp(this._querySet!, 4);
+    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 4); } catch(e) {}
 
     this.device.queue.submit([encoder.finish()]);
 
