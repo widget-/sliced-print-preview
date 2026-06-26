@@ -57,9 +57,23 @@ fn fs_main(in: VertexOutput) -> FragOutput {
   }
   shadowVis /= 25.0;
 
-  // Apply shadow to diffuse+specular (ambient unaffected)
-  let attenuated: f32 = material.ambientStrength + (diffuse + specular) * NdotL * lightIntensity * shadowVis;
-  let lit: vec3<f32> = in.color * attenuated;
+  // IBL — split-sum approximation
+  // Diffuse: irradiance map sampled by normal
+  let kD: f32 = (1.0 - F) * (1.0 - material.metalness);
+  let irradiance: vec3<f32> = textureSample(irradianceMap, iblSampler, N).rgb;
+  let diffuseIBL: vec3<f32> = kD * irradiance * material.envIntensity;
+
+  // Specular: prefiltered env map at roughness-dependent LOD × DFG LUT
+  let R: vec3<f32> = reflect(-V, N);
+  let roughnessLOD: f32 = material.roughness * 4.0; // 4 mips for 256px cubemap
+  let prefiltered: vec3<f32> = textureSampleLevel(prefilterMap, iblSampler, R, roughnessLOD).rgb;
+  let brdf: vec2<f32> = textureSample(brdfLUT, iblSampler, vec2<f32>(NdotV, material.roughness)).rg;
+  let specularIBL: vec3<f32> = prefiltered * (f0 * brdf.x + brdf.y) * material.envIntensity;
+
+  let ambientIBL: vec3<f32> = diffuseIBL + specularIBL;
+
+  // Apply shadow to direct lighting only (ambient/IBL unaffected)
+  let lit: vec3<f32> = in.color * (ambientIBL + (diffuse + specular) * NdotL * lightIntensity * shadowVis);
 
   // Output view-space normal packed in [0,1] for G-buffer SSAO
   let viewN: vec3<f32> = (camera.viewMat * vec4<f32>(N, 0.0)).xyz;

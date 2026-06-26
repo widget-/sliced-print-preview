@@ -37,6 +37,12 @@ struct SegmentData {
 @group(1) @binding(1) var shadowSampler: sampler_comparison;
 @group(1) @binding(2) var<uniform> shadowVP: mat4x4<f32>;
 
+// IBL bindings (group 2)
+@group(2) @binding(0) var irradianceMap: texture_cube<f32>;
+@group(2) @binding(1) var prefilterMap: texture_cube<f32>;
+@group(2) @binding(2) var brdfLUT: texture_2d<f32>;
+@group(2) @binding(3) var iblSampler: sampler;
+
 struct VertexInput {
   @location(0) position: vec3<f32>,
   @location(1) normal: vec3<f32>,

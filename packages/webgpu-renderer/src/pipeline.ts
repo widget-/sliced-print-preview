@@ -13,6 +13,7 @@ import blurWgsl from './shaders/blur.wgsl?raw';
 import shadowWgsl from './shaders/shadow.wgsl?raw';
 import velocityWgsl from './shaders/velocity.wgsl?raw';
 import taaResolveWgsl from './shaders/taa_resolve.wgsl?raw';
+import { IBLPipeline } from './ibl';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
@@ -118,6 +119,11 @@ export class SlicedPipeline {
   taaEnabled = true;
   taaFrame = 0;
   _historyIndex = 0;
+
+  // IBL (environment lighting)
+  iblPipeline!: IBLPipeline;
+  iblBGL!: GPUBindGroupLayout;
+  iblBG!: GPUBindGroup;
 
   // Debug texture preview
   debugBGL!: GPUBindGroupLayout;
@@ -305,7 +311,16 @@ export class SlicedPipeline {
     const ds = { format: 'depth32float' as const, depthWriteEnabled: true, depthCompare: 'less' as const };
     const fmt = navigator.gpu.getPreferredCanvasFormat();
     this.offscreenFormat = fmt;
-    const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL, this.shadowRenderBGL] });
+    // IBL bind group layout (group 2) — environment map textures for PBR
+    this.iblBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' as const } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: 'cube' as const } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d' as const } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
+    });
+    const rPL = d.createPipelineLayout({ bindGroupLayouts: [this.renderBGL, this.shadowRenderBGL, this.iblBGL] });
 
     for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_main', buffers: [vx] },
@@ -453,6 +468,19 @@ export class SlicedPipeline {
       layout: cPL,
       compute: { module: cullMod, entryPoint: 'cs_arc_fixup' },
     });
+
+    // ── IBL pipeline: load HDR, generate cubemap ──
+    this.iblPipeline = new IBLPipeline(d);
+    await this.iblPipeline.init('/horn-koppe_spring_1k.hdr');
+    this.iblBG = d.createBindGroup({
+      layout: this.iblBGL,
+      entries: [
+        { binding: 0, resource: this.iblPipeline.irradianceMap.createView({ dimension: 'cube' }) },
+        { binding: 1, resource: this.iblPipeline.prefilterMap.createView({ dimension: 'cube' }) },
+        { binding: 2, resource: this.iblPipeline.brdfLUT.createView() },
+        { binding: 3, resource: this.iblPipeline.iblSampler },
+      ],
+    });
   }
 
   setSegments(buffers: GpuSegmentBuffers) {
@@ -577,6 +605,7 @@ export class SlicedPipeline {
       pass.setPipeline(this.bodyPipes[l]);
       pass.setBindGroup(0, this.lodBGs[l]);
       pass.setBindGroup(1, this.shadowBG);
+      if (this.iblBG) pass.setBindGroup(2, this.iblBG);
       pass.setVertexBuffer(0, this.bodyVB[l]);
       pass.setIndexBuffer(this.bodyIB[l], 'uint16');
       pass.drawIndexed(this.bodyIC[l], this.segmentBuffers.count);
@@ -589,6 +618,7 @@ export class SlicedPipeline {
     pass.setPipeline(this.capPipes[0]);
     pass.setBindGroup(0, this.lodBGs[0]);
     pass.setBindGroup(1, this.shadowBG);
+    if (this.iblBG) pass.setBindGroup(2, this.iblBG);
     pass.setVertexBuffer(0, this.capVB[0]);
     pass.setIndexBuffer(this.capIB[0], 'uint16');
     pass.drawIndexed(this.capIC[0], this.segmentBuffers.capCount);
