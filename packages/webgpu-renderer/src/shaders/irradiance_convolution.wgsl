@@ -68,7 +68,9 @@ fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
   let N: vec3<f32> = normalize(worldPos);
 
   // Tangent-space basis from the normal (robust against N ≈ Z-up)
-  let up: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.z) < 0.999);
+  // Default: world Z = up. When N is nearly parallel to Z (|N.z| ≈ 1),
+  // cross(up, N) would be degenerate, so fall back to +X as up.
+  let up: vec3<f32> = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(N.z) < 0.999);
   let right: vec3<f32> = normalize(cross(up, N));
   let localUp: vec3<f32> = cross(N, right);
 

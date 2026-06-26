@@ -97,7 +97,7 @@ const timing = ref<{ api?: number; model?: number; slice?: number; parse?: numbe
 
 const roughness = ref(0.10);
 const metalness = ref(0.0);
-const envIntensity = ref(0.25);
+const envIntensity = ref(1.0);
 const specularStrength = ref(1.0);
 const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');

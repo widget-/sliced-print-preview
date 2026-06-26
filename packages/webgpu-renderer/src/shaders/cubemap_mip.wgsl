@@ -1,6 +1,11 @@
 // ── Cubemap mip generation ──
 // Renders each face at the current mip level by sampling the previous mip level
 // with bilinear filtering. Each output pixel is a filtered average of 2x2 input pixels.
+//
+// NOTE: This shader is NOT currently imported anywhere. The equirect→cubemap pass
+// (equirect_to_cubemap.wgsl) renders all 10 mip levels directly from the equirect
+// source, so cascade filtering is unnecessary. This file exists as a reference or
+// for an alternative mip-generation path.
 
 @group(0) @binding(0) var<uniform> mvp: mat4x4<f32>;
 @group(0) @binding(1) var srcCube: texture_cube<f32>;

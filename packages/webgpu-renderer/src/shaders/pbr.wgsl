@@ -32,7 +32,9 @@
 //     F₀ = mix(0.04, baseColor, metalness) — gray for dielectrics, colored for metals
 //   GGX NDF:                 D = α² / (π × (NdotH² × (α² - 1) + 1)²)
 //     α = max(roughness², 0.001)
-//   Smith GGX (direct):      k = (α + 1)² / 8
+//   Smith GGX (direct, correlated Heitz form):
+//     G1 = 2 * NdotV / (NdotV + sqrt(α² + (1-α²) * NdotV²))
+//     This replaces the Schlick approximation k = (α+1)²/8 for better accuracy.
 //   Energy conservation:     kD = (1 - F) × (1 - metalness)
 //     The Fresnel term F accounts for energy that goes into specular reflection;
 //     the remaining (1 - F) is available for diffuse, further reduced by (1 - metalness)

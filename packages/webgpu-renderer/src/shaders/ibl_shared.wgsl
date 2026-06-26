@@ -84,7 +84,9 @@ fn importanceSampleGGX(xi: vec2<f32>, N: vec3<f32>, roughness: f32) -> vec3<f32>
   // Tangent-to-world transform (build orthonormal basis from N)
   // Uses Z-up fallback (world Z = up). When N is nearly parallel to Z,
   // falls back to using +X as the "up" for the tangent frame construction.
-  let up: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.z) < 0.999);
+  // Default: world Z = up. When N is nearly parallel to Z (|N.z| ≈ 1),
+  // cross(up, N) would be degenerate, so fall back to +X as up.
+  let up: vec3<f32> = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(N.z) < 0.999);
   let tangent: vec3<f32> = normalize(cross(up, N));
   let bitangent: vec3<f32> = cross(N, tangent);
 

@@ -47,7 +47,7 @@ const props = withDefaults(defineProps<{
   rendererType: 'webgl2',
   roughness: 0.10,
   metalness: 0.0,
-  envIntensity: 0.25,
+  envIntensity: 1.0,
   specularStrength: 1.0,
   ambientStrength: 0.5,
   baseColorTint: '#e8e0d4',

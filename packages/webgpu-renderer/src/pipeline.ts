@@ -136,7 +136,7 @@ export class SlicedPipeline {
   copyPipe!: GPURenderPipeline;
 
   material: MaterialUniforms = {
-    roughness: 0.10, metalness: 0, envIntensity: 0.25,
+    roughness: 0.10, metalness: 0, envIntensity: 1.0,
     specularStrength: 1, ambientStrength: 0.5,
     baseColorTint: [1, 0.878, 0.831],
   };
