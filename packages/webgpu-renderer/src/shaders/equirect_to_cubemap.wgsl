@@ -16,15 +16,21 @@
 //                                 view/projection matrices.
 //   Scene (runtime sampling):    Z-up (+Z = sky). The conversion from world-space
 //                                 direction dir to equirect UV is:
-//                                   phi   = atan2(dir.x, dir.z)  — azimuth from +Z
+//                                   phi   = atan2(dir.z, dir.x)  — azimuth from +X
 //                                   theta = asin(dir.z)          — elevation (Z = up)
 //                                   uv.y  = 0.5 - theta / π      — top = zenith
-//                                   uv.x  = phi / (2π) + 0.5     — center = +Z
+//                                   uv.x  = phi / (2π) + 0.5     — center = +X
 //
 // Key detail — Z-up elevation:
 //   The scene world has Z as the vertical axis. asin(dir.z) gives the
 //   elevation: positive z → above horizon (sky), negative z → below (ground).
 //   This is why theta = asin(dir.z), NOT asin(dir.y) (which would assume Y-up).
+//
+// Azimuth convention:
+//   Poly Haven HDRIs use +X as the "forward" direction at the center of the
+//   equirect image (uv.x = 0.5). Using atan2(dir.z, dir.x) places +X at the
+//   center. Using atan2(dir.x, dir.z) would place +Z at center, rotating the
+//   environment 90° horizontally.
 //
 // Face matrices (defined in ibl.ts makeFaceMatrices()):
 //   Each face is rendered with a 90° FOV perspective camera at the origin,
@@ -64,10 +70,12 @@ fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
   let dir = normalize(worldPos);
 
   // Spherical coords — Z-up: dir.z is the vertical component
-  let phi = atan2(dir.x, dir.z);            // azimuth: 0 = +Z (forward/sky in Z-up)
+  // Azimuth from +X: Poly Haven HDRIs have uv.x = 0.5 = +X direction.
+  // (Using atan2(dir.x, dir.z) would put +Z at center, rotating the env 90°.)
+  let phi = atan2(dir.z, dir.x);            // azimuth: 0 = +X, π/2 = +Z
   let theta = asin(dir.z);                  // elevation: π/2 = zenith, -π/2 = nadir
 
-  // Map to equirect UV. uv.x = 0.5 is forward (+Z). uv.y = 0 is zenith (top of image).
+  // Map to equirect UV. uv.x = 0.5 is +X (Poly Haven convention). uv.y = 0 is zenith.
   let uv = vec2<f32>(phi * 0.1591549 + 0.5, 0.5 - theta * 0.3183099);
   //   0.1591549 = 1 / (2π)    — phi ∈ [-π, π] → uv.x ∈ [0, 1]
   //   0.3183099 = 1 / π       — theta ∈ [-π/2, π/2] → uv.y ∈ [0, 1]

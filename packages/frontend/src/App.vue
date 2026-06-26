@@ -58,6 +58,9 @@
           <option value="occlusion">SSAO Occlusion</option>
           <option value="blur-temp">SSAO Blur Temp</option>
           <option value="brdf-lut">BRDF LUT</option>
+          <option value="prefilter-up">Prefilter +Z (sky)</option>
+          <option value="prefilter-fwd">Prefilter +Y (north)</option>
+          <option value="prefilter-down">Prefilter -Z (ground)</option>
           <option value="shadow">Shadow Map</option>
           <option value="velocity">Velocity</option>
           <option value="composite-taa">Composite (TAA input)</option>

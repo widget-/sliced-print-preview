@@ -129,8 +129,10 @@ export class SlicedPipeline {
 
   // Debug texture preview
   debugBGL!: GPUBindGroupLayout;
+  debugFloatBGL!: GPUBindGroupLayout;
   debugDepthBGL!: GPUBindGroupLayout;
   debugPipe!: GPURenderPipeline;
+  debugFloatPipe!: GPURenderPipeline;
   debugDepthPipe!: GPURenderPipeline;
   // Passthrough copy (SSAO-off path)
   copyPipe!: GPURenderPipeline;
@@ -369,6 +371,19 @@ export class SlicedPipeline {
     const debugPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugBGL] });
     this.debugPipe = d.createRenderPipeline({
       layout: debugPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug', targets: [{ format: fmt, writeMask: 15 }] },
+      primitive: { topology: 'triangle-list' },
+    });
+    // Filterable float textures (BRDF LUT, prefilter cubemap faces)
+    this.debugFloatBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+    const debugFloatPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugFloatBGL] });
+    this.debugFloatPipe = d.createRenderPipeline({
+      layout: debugFloatPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
       fragment: { module: this.ssaoMod, entryPoint: 'fs_debug', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
@@ -928,6 +943,7 @@ export class SlicedPipeline {
   renderDebugView(pass: GPURenderPassEncoder, mode: string) {
     let view: GPUTextureView | undefined;
     let depthMode = false;
+    let floatMode = false;
     switch (mode) {
       case 'depth':
         view = this.ssaoDepthTex.createView();
@@ -943,6 +959,22 @@ export class SlicedPipeline {
       case 'brdf-lut':
         view = this.iblPipeline?.brdfLUT.createView();
         if (!view) return;
+        floatMode = true;
+        break;
+      case 'prefilter-up':
+        view = this.iblPipeline?.prefilterMap.createView({ dimension: '2d', baseArrayLayer: 4, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
+        break;
+      case 'prefilter-fwd':
+        view = this.iblPipeline?.prefilterMap.createView({ dimension: '2d', baseArrayLayer: 2, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
+        break;
+      case 'prefilter-down':
+        view = this.iblPipeline?.prefilterMap.createView({ dimension: '2d', baseArrayLayer: 5, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
         break;
       case 'color':
         view = this.offscreenColorTex.createView();
@@ -966,10 +998,10 @@ export class SlicedPipeline {
         return;
     }
     const bg = this.device.createBindGroup({
-      layout: depthMode ? this.debugDepthBGL : this.debugBGL,
+      layout: floatMode ? this.debugFloatBGL : (depthMode ? this.debugDepthBGL : this.debugBGL),
       entries: [{ binding: 0, resource: view! }],
     });
-    pass.setPipeline(depthMode ? this.debugDepthPipe : this.debugPipe);
+    pass.setPipeline(floatMode ? this.debugFloatPipe : (depthMode ? this.debugDepthPipe : this.debugPipe));
     pass.setBindGroup(0, bg);
     pass.draw(3);
   }
