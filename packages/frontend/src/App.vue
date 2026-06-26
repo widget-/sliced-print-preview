@@ -56,6 +56,8 @@
           <option value="normal">Normals</option>
           <option value="depth">Depth</option>
           <option value="occlusion">SSAO Occlusion</option>
+          <option value="blur-temp">SSAO Blur Temp</option>
+          <option value="brdf-lut">BRDF LUT</option>
           <option value="shadow">Shadow Map</option>
           <option value="velocity">Velocity</option>
           <option value="composite-taa">Composite (TAA input)</option>

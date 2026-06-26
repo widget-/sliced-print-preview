@@ -926,7 +926,7 @@ export class SlicedPipeline {
 
   /** Render a debug preview of one internal texture to a render pass. */
   renderDebugView(pass: GPURenderPassEncoder, mode: string) {
-    let view: GPUTextureView;
+    let view: GPUTextureView | undefined;
     let depthMode = false;
     switch (mode) {
       case 'depth':
@@ -935,6 +935,14 @@ export class SlicedPipeline {
         break;
       case 'occlusion':
         view = this.ssaoOcclusionTex.createView();
+        break;
+      case 'blur-temp':
+        view = this.blurTempTex?.createView();
+        if (!view) return;
+        break;
+      case 'brdf-lut':
+        view = this.iblPipeline?.brdfLUT.createView();
+        if (!view) return;
         break;
       case 'color':
         view = this.offscreenColorTex.createView();
@@ -959,7 +967,7 @@ export class SlicedPipeline {
     }
     const bg = this.device.createBindGroup({
       layout: depthMode ? this.debugDepthBGL : this.debugBGL,
-      entries: [{ binding: 0, resource: view }],
+      entries: [{ binding: 0, resource: view! }],
     });
     pass.setPipeline(depthMode ? this.debugDepthPipe : this.debugPipe);
     pass.setBindGroup(0, bg);

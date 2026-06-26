@@ -422,7 +422,7 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
-    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 4); } catch(e) {}
+    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 6); } catch(e) {}
 
     this.device.queue.submit([encoder.finish()]);
 
@@ -433,13 +433,13 @@ export class WebGPURenderer implements Renderer {
       const rb = this._queryResolveBuf!;
       const rb2 = this._queryResultBuf!;
       const re = this.device.createCommandEncoder();
-      re.resolveQuerySet(qs, 0, 5, rb, 0);
-      re.copyBufferToBuffer(rb, 0, rb2, 0, 5 * 8);
+      re.resolveQuerySet(qs, 0, 7, rb, 0);
+      re.copyBufferToBuffer(rb, 0, rb2, 0, 7 * 8);
       this.device.queue.submit([re.finish()]);
       rb2.mapAsync(GPUMapMode.READ).then(() => {
         const arr = new BigInt64Array(rb2.getMappedRange());
-        const labels = ['offscreen', 'ssao-start', 'blur-start', 'composite-start', 'frame-end'];
-        for (let i = 0; i < 4; i++) {
+        const labels = ['offscreen', 'ssao-start', 'blur-start', 'velocity-start', 'velocity-end', 'frame-end'];
+        for (let i = 0; i < 5; i++) {
           if (arr[i] === 0n || arr[i+1] === 0n) continue;
           const ns = Number(arr[i+1] - arr[i]);
           console.log(`  GPU [${labels[i]}→${labels[i+1]}]: ${(ns / 1e6).toFixed(3)} ms`);
