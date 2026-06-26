@@ -61,6 +61,19 @@ function startRelay(tag?: string) {
   console.error = (...args: unknown[]) => { origError(...args); relay('error', ...args) }
   console.info = (...args: unknown[]) => { origInfo(...args); relay('info', ...args) }
 
+  // Catch unhandled errors & promise rejections (not covered by console.error override)
+  if (typeof window !== 'undefined') {
+    window.onerror = (msg, source, line, col, err) => {
+      const text = err?.stack ? `${err.stack}` : `${msg} (${source}:${line}:${col})`
+      relay('error', '[UNCAUGHT]', text)
+      // Don't prevent default — let browser devtools also see it
+      return false
+    }
+    window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+      relay('error', '[UNHANDLED REJECTION]', e.reason?.stack ?? String(e.reason))
+    })
+  }
+
   ;(console as any)[kRelayed] = true
 
   origLog(`[console-relay] Active${tag ? ` (tag: ${tag})` : ''} — forwarding console to dev server`)
