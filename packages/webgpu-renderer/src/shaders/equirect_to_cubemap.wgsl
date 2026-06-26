@@ -16,10 +16,18 @@
 //                                 view/projection matrices.
 //   Scene (runtime sampling):    Z-up (+Z = sky). The conversion from world-space
 //                                 direction dir to equirect UV is:
-//                                   phi   = atan2(dir.z, dir.x)  — azimuth from +X
+//                                   phi   = atan2(dir.y, dir.x)  — azimuth from +X toward +Y
 //                                   theta = asin(dir.z)          — elevation (Z = up)
 //                                   uv.y  = 0.5 - theta / π      — top = zenith
 //                                   uv.x  = phi / (2π) + 0.5     — center = +X
+//
+// Key detail — azimuth convention:
+//   Using atan2(dir.z, dir.x) puts the singularity on the ±Y faces (horizontal),
+//   causing polar-like distortion in the north/south cubemap faces.
+//   Using atan2(dir.y, dir.x) puts the singularity on the ±Z faces
+//   (zenith/nadir) where polar distortion is expected and less noticeable.
+//   Both place +X at the center of the equirect image (uv.x = 0.5), matching
+//   the Poly Haven HDRI convention.
 //
 // Key detail — Z-up elevation:
 //   The scene world has Z as the vertical axis. asin(dir.z) gives the
@@ -69,10 +77,11 @@ fn vs_main(@location(0) position: vec4<f32>) -> VSOut {
 fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
   let dir = normalize(worldPos);
 
-  // Spherical coords — Z-up: dir.z is the vertical component
-  // Azimuth from +X: Poly Haven HDRIs have uv.x = 0.5 = +X direction.
-  // (Using atan2(dir.x, dir.z) would put +Z at center, rotating the env 90°.)
-  let phi = atan2(dir.z, dir.x);            // azimuth: 0 = +X, π/2 = +Z
+  // Spherical coords — Z-up: dir.z is the vertical component.
+  // Azimuth measured from +X toward +Y: atan2(dir.y, dir.x).
+  // This puts the singularity on the +Z/-Z faces (zenith/nadir) where polar
+  // distortion is expected, keeping horizontal faces (X, Y) rectilinear.
+  let phi = atan2(dir.y, dir.x);            // azimuth: 0 = +X, π/2 = +Y
   let theta = asin(dir.z);                  // elevation: π/2 = zenith, -π/2 = nadir
 
   // Map to equirect UV. uv.x = 0.5 is +X (Poly Haven convention). uv.y = 0 is zenith.
