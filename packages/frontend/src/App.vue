@@ -25,20 +25,15 @@
       </div>
       <div id="material-controls">
         <h4>Render Settings</h4>
-        <label>Roughness <span>{{ roughness.toFixed(2) }}</span></label>
-        <input type="range" min="0" max="1" step="0.01" v-model.number="roughness" />
-        <label>Metalness <span>{{ metalness.toFixed(2) }}</span></label>
-        <input type="range" min="0" max="1" step="0.01" v-model.number="metalness" />
-        <label>Env Intensity <span>{{ envIntensity.toFixed(2) }}</span></label>
-        <input type="range" min="0" max="2" step="0.01" v-model.number="envIntensity" />
+        <SliderControl label="Roughness" v-model="roughness" :max="1" :step="0.01" />
+        <SliderControl label="Metalness" v-model="metalness" :max="1" :step="0.01" />
+        <SliderControl label="Env Intensity" v-model="envIntensity" :max="2" :step="0.01" />
         <label>Environment</label>
         <select v-model="envMapUrl" class="renderer-select">
           <option v-for="f in envMapFiles" :key="f" :value="f">{{ f.replace(/_/g, ' ').replace(/\.hdr$/, '') }}</option>
         </select>
-        <label>Specular <span>{{ specularStrength.toFixed(2) }}</span></label>
-        <input type="range" min="0" max="1" step="0.01" v-model.number="specularStrength" />
-        <label>Ambient <span>{{ ambientStrength.toFixed(2) }}</span></label>
-        <input type="range" min="0" max="2" step="0.01" v-model.number="ambientStrength" />
+        <SliderControl label="Specular" v-model="specularStrength" :max="1" :step="0.01" />
+        <SliderControl label="Ambient" v-model="ambientStrength" :max="2" :step="0.01" />
         <label>Color</label>
         <input type="color" v-model="baseColorTint" class="color-picker" />
         <label class="checkbox-label">
@@ -97,6 +92,7 @@
 <script setup lang="ts">
 import { ref, onBeforeUnmount } from 'vue';
 import ModelViewer from './components/ModelViewer.vue';
+import SliderControl from './components/SliderControl.vue';
 
 const loading = ref(false);
 const error = ref('');
@@ -302,6 +298,8 @@ const uploadModel = async (event: Event) => {
   --app-input-text: #333;
 
   color-scheme: light dark;
+  --app-slider-fill: #4a90d9;
+  --app-slider-thumb: #4a90d9;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -359,7 +357,7 @@ html, body, #app { height: 100%; font-family: -apple-system, BlinkMacSystemFont,
 #material-controls label span {
   float: right; color: var(--app-text-muted);
 }
-#material-controls input[type="range"] {
+#material-controls input[type="range"]:not(.slider-input) {
   width: 100%; margin: 1px 0 2px; height: 14px;
 }
 #material-controls .color-picker {
