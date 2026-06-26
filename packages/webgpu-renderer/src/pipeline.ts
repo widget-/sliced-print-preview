@@ -65,6 +65,8 @@ export class SlicedPipeline {
   ssaoBG!: GPUBindGroup;
   ssaoParamsBuf!: GPUBuffer;
   screenSizeBuf!: GPUBuffer;
+  ssaoKernelBuf!: GPUBuffer;   // 32 × vec4 hemisphere samples (storage)
+  ssaoProjBuf!: GPUBuffer;     // projection matrix (uniform)
   ssaoPipe!: GPURenderPipeline;
   // Composite pipeline (fullscreen quad)
   compositeBGL!: GPUBindGroupLayout;
@@ -201,14 +203,46 @@ export class SlicedPipeline {
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
+    this.ssaoProjBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    // SSAO bind group layout (group 0): depth + params + screenSize
+    // Hemisphere kernel: 32 samples, more concentrated near center (ref: LearnOpenGL)
+    const KERNEL_SIZE = 32;
+    const kernelData = new Float32Array(KERNEL_SIZE * 4);
+    for (let i = 0; i < KERNEL_SIZE; i++) {
+      // Random point in hemisphere (z > 0)
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(Math.random());
+      let x = Math.sin(phi) * Math.cos(theta);
+      let y = Math.sin(phi) * Math.sin(theta);
+      let z = Math.cos(phi);
+      const len = Math.sqrt(x * x + y * y + z * z);
+      x /= len; y /= len; z /= len;
+      // Randomize radius, then scale by i/N to concentrate near center
+      const r = Math.random();
+      const s = i / KERNEL_SIZE;
+      const scale = (0.1 + 0.9 * s * s) * r;
+      kernelData[i * 4] = x * scale;
+      kernelData[i * 4 + 1] = y * scale;
+      kernelData[i * 4 + 2] = z * scale;
+      kernelData[i * 4 + 3] = 0;
+    }
+    this.ssaoKernelBuf = d.createBuffer({
+      size: kernelData.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(this.ssaoKernelBuf.getMappedRange()).set(kernelData);
+    this.ssaoKernelBuf.unmap();
+
+    // SSAO bind group layout (group 0): depth + params + screenSize + normal + kernel + proj
     this.ssaoBGL = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
 
@@ -523,6 +557,8 @@ export class SlicedPipeline {
     d.set(camera.viewMat, 16);
     d[32] = camera.position[0]; d[33] = camera.position[1]; d[34] = camera.position[2];
     this.device.queue.writeBuffer(this.cameraBuf, 0, d);
+    // Also write projection matrix for SSAO's 3D hemisphere sampling
+    this.device.queue.writeBuffer(this.ssaoProjBuf, 0, camera.proj);
   }
 
   /** Write camera near/far/fov into the SSAO params buffer for depth linearization. */
@@ -558,7 +594,7 @@ export class SlicedPipeline {
     // Write screen size uniform
     d.queue.writeBuffer(this.screenSizeBuf, 0, new Float32Array([w, h]));
 
-    // SSAO bind group (group 0): depth texture + params + screenSize
+    // SSAO bind group (group 0): depth texture + params + screenSize + normal + kernel + proj
     this.ssaoBG = d.createBindGroup({
       layout: this.ssaoBGL,
       entries: [
@@ -566,6 +602,8 @@ export class SlicedPipeline {
         { binding: 1, resource: { buffer: this.ssaoParamsBuf } },
         { binding: 2, resource: { buffer: this.screenSizeBuf } },
         { binding: 3, resource: this.normalTex.createView() },
+        { binding: 4, resource: { buffer: this.ssaoKernelBuf } },
+        { binding: 5, resource: { buffer: this.ssaoProjBuf } },
       ],
     });
 
@@ -821,6 +859,8 @@ export class SlicedPipeline {
     this.segmentBuffers?.capBuffer?.destroy();
     for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex, this.velocityTex, this.historyTex, this.compositeTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
+    this.ssaoKernelBuf?.destroy();
+    this.ssaoProjBuf?.destroy();
     this.shadowTex?.destroy();
     this.shadowVPBuf?.destroy();
   }
