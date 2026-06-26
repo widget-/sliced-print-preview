@@ -31,6 +31,9 @@ export class OrbitCamera {
   position = new Float64Array([0, 0, 0]);
 
   // Interaction state
+  /** Callback fired whenever the user interacts (pointer, wheel, touch). */
+  onInteraction: (() => void) | null = null;
+
   private _isDragging = false;
   private _lastX = 0;
   private _lastY = 0;
@@ -38,6 +41,7 @@ export class OrbitCamera {
 
   attach(canvas: HTMLCanvasElement): () => void {
     const onDown = (e: MouseEvent | TouchEvent) => {
+      this.onInteraction?.();
       if (e instanceof MouseEvent) {
         this._isDragging = true;
         this._lastX = e.clientX;
@@ -95,6 +99,7 @@ export class OrbitCamera {
 
       this._lastX = cx;
       this._lastY = cy;
+      this.onInteraction?.();
     };
     const onUp = () => { this._isDragging = false; };
 
@@ -103,6 +108,7 @@ export class OrbitCamera {
     window.addEventListener('mouseup', onUp);
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
     canvas.addEventListener('wheel', (e) => {
+      this.onInteraction?.();
       this.radius *= e.deltaY > 0 ? 1.08 : 0.92;
       this.radius = Math.max(1, Math.min(this.radius, 10000));
     });
