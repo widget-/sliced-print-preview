@@ -19,7 +19,7 @@ struct SSAOParams {
 @group(0) @binding(1) var<uniform> params: SSAOParams;
 @group(0) @binding(2) var<uniform> screenSize: vec2<f32>;
 @group(0) @binding(3) var normalTex: texture_2d<f32>;
-@group(0) @binding(4) var<storage, read> kernel: array<vec4<f32>, 32>;
+@group(0) @binding(4) var<storage, read> kernel: array<vec4<f32>, 48>;
 @group(0) @binding(5) var<uniform> proj: mat4x4<f32>;
 
 @vertex
@@ -67,7 +67,7 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   let TBN: mat3x3<f32> = mat3x3<f32>(tangent, bitangent, normal);
 
   var occ: f32 = 0.0;
-  for (var i: u32 = 0u; i < 32u; i++) {
+  for (var i: u32 = 0u; i < 48u; i++) {
     let sampleDir: vec3<f32> = TBN * kernel[i].xyz;
     let samplePos: vec3<f32> = viewPos + sampleDir * params.radius;
 
@@ -102,7 +102,7 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     }
   }
 
-  occ = 1.0 - params.intensity * (occ / 32.0);
+  occ = 1.0 - params.intensity * (occ / 48.0);
 
   // Distance fadeout: reduce AO for distant objects (ref: Godot)
   let viewDist: f32 = -viewPos.z;

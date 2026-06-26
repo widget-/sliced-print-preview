@@ -175,8 +175,8 @@ export class OrbitCamera {
     const proj = [
       f / aspect, 0, 0, 0,
       0, f, 0, 0,
-      0, 0, (this.far + this.near) * nf, -1,
-      0, 0, 2 * this.far * this.near * nf, 0,
+      0, 0, this.far * nf, -1,
+      0, 0, this.far * this.near * nf, 0,
     ];
     this.proj.set(proj);
 

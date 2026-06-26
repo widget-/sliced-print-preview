@@ -5,7 +5,7 @@ struct VelocityParams {
   prevViewProj: mat4x4<f32>,
 };
 
-@group(0) @binding(0) var depthTex: texture_2d<f32>;
+@group(0) @binding(0) var depthTex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> params: VelocityParams;
 
 @vertex
@@ -16,10 +16,10 @@ fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> 
 
 @fragment
 fn fs_velocity(@builtin(position) pos: vec4<f32>) -> @location(0) vec2<f32> {
-  let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0).r;
+  let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0);
   let screenSize: vec2<f32> = vec2<f32>(f32(textureDimensions(depthTex, 0).x), f32(textureDimensions(depthTex, 0).y));
 
-  // Current frame NDC (non-linear depth)
+  // Current frame NDC
   let uv: vec2<f32> = pos.xy / screenSize;
   let ndc: vec4<f32> = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
 

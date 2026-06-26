@@ -66,6 +66,7 @@ export class WebGPURenderer implements Renderer {
     this.context = context;
     this.pipeline = new SlicedPipeline(device);
     await this.pipeline.init();
+    this.pipeline.taaEnabled = true;
 
     this.camera = new OrbitCamera();
     this.pipeline.setSSAOCamera(this.camera.near, this.camera.far, this.camera.fov);
@@ -293,6 +294,10 @@ export class WebGPURenderer implements Renderer {
     // Update camera with TAA jitter
     this.camera.update(w / h);
 
+    // Write clean (unjittered) projection for SSAO hemisphere sampling
+    // Must be done before jitter modifies camera.proj in-place below.
+    this.device.queue.writeBuffer(this.pipeline.ssaoProjBuf, 0, new Float32Array(this.camera.proj));
+
     // Apply Halton jitter to the projection for TAA
     if (this.pipeline.taaEnabled) {
       const jx = SlicedPipeline.halton2(this.pipeline.taaFrame);
@@ -363,6 +368,12 @@ export class WebGPURenderer implements Renderer {
       if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 3); } catch(e) {}
     }
 
+    // ── Velocity pass (screen-space motion) ──
+    // Always compute velocity when TAA is enabled — needs depth from offscreen pass
+    if (this.pipeline.taaEnabled) {
+      this.pipeline.dispatchVelocity(encoder);
+    }
+
     // ── Present to swapchain ──
     const sv = this.context.getCurrentTexture().createView();
     if (this.debugPreview !== 'none') {
@@ -371,8 +382,22 @@ export class WebGPURenderer implements Renderer {
       });
       this.pipeline.renderDebugView(swapPass, this.debugPreview);
       swapPass.end();
+    } else if (this.pipeline.taaEnabled) {
+      // TAA path:
+      // 1. Composite offscreen color × occlusion → compositeTex
+      // 2. TAA resolve: blend compositeTex + velocityTex + historyTex → swapchain + new history
+      const compPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: this.pipeline.compositeTex.createView(),
+          loadOp: 'clear', storeOp: 'store',
+        }],
+      });
+      this.pipeline.composite(compPass);
+      compPass.end();
+
+      this.pipeline.dispatchTAA(encoder, sv);
     } else if (this.ssaoEnabled) {
-      // Composite: offscreen color × occlusion → swapchain (1 color target)
+      // Composite: offscreen color × occlusion → swapchain
       const swapPass = encoder.beginRenderPass({
         colorAttachments: [{
           view: sv,
@@ -383,7 +408,7 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.composite(swapPass);
       swapPass.end();
     } else {
-      // Copy offscreen color → swapchain (1 color target, no SSAO)
+      // Copy offscreen color → swapchain (no SSAO)
       const swapPass = encoder.beginRenderPass({
         colorAttachments: [{
           view: sv,

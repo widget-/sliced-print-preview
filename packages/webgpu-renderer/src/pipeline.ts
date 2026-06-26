@@ -11,6 +11,8 @@ import ssaoMainWgsl from './shaders/ssao_main.wgsl?raw';
 import debugDepthWgsl from './shaders/debug_depth.wgsl?raw';
 import blurWgsl from './shaders/blur.wgsl?raw';
 import shadowWgsl from './shaders/shadow.wgsl?raw';
+import velocityWgsl from './shaders/velocity.wgsl?raw';
+import taaResolveWgsl from './shaders/taa_resolve.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
@@ -110,11 +112,12 @@ export class SlicedPipeline {
   taaBGL!: GPUBindGroupLayout;
   taaPipe!: GPURenderPipeline;
   taaParamsBuf!: GPUBuffer;
-  historyTex!: GPUTexture;
+  historyTex: GPUTexture[] = [];
   compositeTex!: GPUTexture;
-  taaBG!: GPUBindGroup;
-  taaEnabled = false;
+  taaBG: GPUBindGroup[] = [];
+  taaEnabled = true;
   taaFrame = 0;
+  _historyIndex = 0;
 
   // Debug texture preview
   debugBGL!: GPUBindGroupLayout;
@@ -213,7 +216,7 @@ export class SlicedPipeline {
     // Random points on a disk, projected onto the hemisphere (cosine distribution).
     // More samples near the normal = better quality for the same count.
     // Combined with TBN orientation, this gives a natural AO distribution.
-    const KERNEL_SIZE = 32;
+    const KERNEL_SIZE = 48;
     const kernelData = new Float32Array(KERNEL_SIZE * 4);
     for (let i = 0; i < KERNEL_SIZE; i++) {
       // Random point on unit disk (cosine-weighted → sqrt for uniform area)
@@ -399,6 +402,47 @@ export class SlicedPipeline {
       primitive: { topology: 'triangle-list' },
     });
 
+    // ── Velocity pipeline (screen-space motion from depth) ──
+    this.velocityMod = d.createShaderModule({ code: velocityWgsl });
+    this.velocityBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.velocityBuf = d.createBuffer({ size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const velocityPL = d.createPipelineLayout({ bindGroupLayouts: [this.velocityBGL] });
+    this.velocityPipe = d.createRenderPipeline({
+      layout: velocityPL,
+      vertex: { module: this.velocityMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.velocityMod, entryPoint: 'fs_velocity', targets: [{ format: 'rg16float', writeMask: 15 }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // ── TAA resolve pipeline ──
+    this.taaMod = d.createShaderModule({ code: taaResolveWgsl });
+    this.taaBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    this.taaParamsBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    d.queue.writeBuffer(this.taaParamsBuf, 0, new Float32Array([0.15, 0, 0, 0]));
+    // TAA pipeline uses MRT: color[0] = output, color[1] = history
+    const taaPL = d.createPipelineLayout({ bindGroupLayouts: [this.taaBGL] });
+    this.taaPipe = d.createRenderPipeline({
+      layout: taaPL,
+      vertex: { module: this.taaMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.taaMod, entryPoint: 'fs_taa', targets: [
+        { format: this.offscreenFormat, writeMask: 15 },
+        { format: this.offscreenFormat, writeMask: 15 },
+      ]},
+      primitive: { topology: 'triangle-list' },
+    });
+
     // ── Compute pipeline ──
     const cPL = d.createPipelineLayout({ bindGroupLayouts: [this.computeBGL] });
     this.computePipe = d.createComputePipeline({
@@ -565,8 +609,8 @@ export class SlicedPipeline {
     d.set(camera.viewMat, 16);
     d[32] = camera.position[0]; d[33] = camera.position[1]; d[34] = camera.position[2];
     this.device.queue.writeBuffer(this.cameraBuf, 0, d);
-    // Also write projection matrix for SSAO's 3D hemisphere sampling
-    this.device.queue.writeBuffer(this.ssaoProjBuf, 0, camera.proj);
+    // Write velocity UBO (invViewProj + prevViewProj) for TAA
+    this.writeVelocity(camera);
   }
 
   /** Write camera near/far/fov into the SSAO params buffer for depth linearization. */
@@ -708,16 +752,38 @@ export class SlicedPipeline {
   /** Create/recreate TAA textures at given resolution. */
   resizeTAA(w: number, h: number) {
     const d = this.device;
-    for (const t of [this.velocityTex, this.compositeTex, this.historyTex]) t?.destroy();
+    for (const t of [this.velocityTex, this.compositeTex, ...this.historyTex]) t?.destroy();
     this.velocityTex = d.createTexture({
-      size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      size: [w, h], format: 'rg16float', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     this.compositeTex = d.createTexture({
       size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
-    this.historyTex = d.createTexture({
+    // Two history textures for ping-pong (read one, write the other)
+    this.historyTex = [0, 1].map(() => d.createTexture({
       size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    }));
+    this._historyIndex = 0;
+
+    // Velocity bind group: depth + params
+    this.velocityBG = d.createBindGroup({
+      layout: this.velocityBGL,
+      entries: [
+        { binding: 0, resource: this.ssaoDepthTex.createView() },
+        { binding: 1, resource: { buffer: this.velocityBuf } },
+      ],
     });
+
+    // TAA bind groups: one per history texture (read from history[i], write to history[1-i])
+    this.taaBG = [0, 1].map(i => d.createBindGroup({
+      layout: this.taaBGL,
+      entries: [
+        { binding: 0, resource: this.compositeTex.createView() },
+        { binding: 1, resource: this.velocityTex.createView() },
+        { binding: 2, resource: this.historyTex[i].createView() },
+        { binding: 3, resource: { buffer: this.taaParamsBuf } },
+      ],
+    }));
   }
 
   /** Write velocity UBO (invViewProj + prevViewProj). */
@@ -739,19 +805,22 @@ export class SlicedPipeline {
     pass.end();
   }
 
-  /** Composite to intermediate buffer, then TAA resolve + history write. */
+  /** TAA resolve: blend composite color + velocity + history → swapchain + new history. */
   dispatchTAA(enc: GPUCommandEncoder, outView: GPUTextureView) {
-    if (!this.taaBG) return;
+    if (!this.taaBG.length) return;
+    const readIdx = this._historyIndex;
+    const writeIdx = 1 - readIdx;
     const pass = enc.beginRenderPass({
       colorAttachments: [
         { view: outView, loadOp: 'clear', storeOp: 'store' },
-        { view: this.historyTex.createView(), loadOp: 'clear', storeOp: 'store' },
+        { view: this.historyTex[writeIdx].createView(), loadOp: 'clear', storeOp: 'store' },
       ],
     });
     pass.setPipeline(this.taaPipe);
-    pass.setBindGroup(0, this.taaBG);
+    pass.setBindGroup(0, this.taaBG[readIdx]); // reads from history[readIdx]
     pass.draw(3);
     pass.end();
+    this._historyIndex = writeIdx; // next frame reads from what we just wrote
     this.taaFrame++;
   }
 
@@ -865,7 +934,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();
-    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex, this.velocityTex, this.historyTex, this.compositeTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex, this.velocityTex, this.compositeTex, ...this.historyTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
     this.ssaoKernelBuf?.destroy();
     this.ssaoProjBuf?.destroy();
