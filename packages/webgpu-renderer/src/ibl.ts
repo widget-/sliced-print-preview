@@ -9,6 +9,7 @@
 
 import { loadHDR } from './hdr';
 import equirectToCubemapWgsl from './shaders/equirect_to_cubemap.wgsl?raw';
+import irradianceConvolutionWgsl from './shaders/irradiance_convolution.wgsl?raw';
 
 const CUBE_SIZE = 512;
 
@@ -168,8 +169,11 @@ export class IBLPipeline {
     this.envCubemap = this.renderEquirectToCubemap(equirectTex);
     equirectTex.destroy();
 
-    // Steps 3–5 will be added here
-    // this.irradianceMap = this.computeIrradiance();
+    // Step 3: Diffuse irradiance convolution
+    this.irradianceMap.destroy();
+    this.irradianceMap = this.computeIrradiance(this.envCubemap);
+
+    // Steps 4–5 will be added here
     // this.prefilterMap = this.computePrefilter();
     // this.brdfLUT = this.computeBRDFLUT();
   }
@@ -247,6 +251,81 @@ export class IBLPipeline {
 
     depthTex.destroy();
     return cubemap;
+  }
+
+  /** Convolve env cubemap into a 32×32 diffuse irradiance cubemap via hemisphere integration. */
+  private computeIrradiance(envCubemap: GPUTexture): GPUTexture {
+    const d = this.device;
+    const size = 32;
+
+    const tex = d.createTexture({
+      dimension: '2d',
+      size: { width: size, height: size, depthOrArrayLayers: 6 },
+      format: 'rgba16float',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+
+    const mod = d.createShaderModule({ code: irradianceConvolutionWgsl });
+    const bgl = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: 'cube' as const } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
+    });
+    const pipe = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+      vertex: {
+        module: mod, entryPoint: 'vs_main',
+        buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
+      },
+      fragment: {
+        module: mod, entryPoint: 'fs_main',
+        targets: [{ format: 'rgba16float' }],
+      },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+    });
+
+    const depthTex = d.createTexture({
+      size: [size, size], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    const depthView = depthTex.createView();
+    const uniformBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const envView = envCubemap.createView({ dimension: 'cube' });
+
+    for (let face = 0; face < 6; face++) {
+      d.queue.writeBuffer(uniformBuf, 0, this.faceMatrices[face]);
+
+      const bg = d.createBindGroup({
+        layout: bgl,
+        entries: [
+          { binding: 0, resource: { buffer: uniformBuf } },
+          { binding: 1, resource: envView },
+          { binding: 2, resource: this.iblSampler },
+        ],
+      });
+
+      const enc = d.createCommandEncoder();
+      const pass = enc.beginRenderPass({
+        colorAttachments: [{
+          view: tex.createView({ dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1 }),
+          loadOp: 'clear', storeOp: 'store',
+        }],
+        depthStencilAttachment: { view: depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      });
+      pass.setPipeline(pipe);
+      pass.setViewport(0, 0, size, size, 0, 1);
+      pass.setVertexBuffer(0, this.cubeVB);
+      pass.setBindGroup(0, bg);
+      pass.draw(36);
+      pass.end();
+      d.queue.submit([enc.finish()]);
+    }
+
+    depthTex.destroy();
+    return tex;
   }
 
   dispose() {
