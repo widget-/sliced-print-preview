@@ -30,6 +30,8 @@ export class WebGPURenderer implements Renderer {
     if (!adapter) throw new Error('No WebGPU adapter');
     const device = await adapter.requestDevice();
     this.device = device;
+    // Relay WebGPU validation errors to the dev server console
+    ;(window as any).__relayGPUError?.(device);
 
     const context = canvas.getContext('webgpu') as GPUCanvasContext;
     const format = navigator.gpu.getPreferredCanvasFormat();

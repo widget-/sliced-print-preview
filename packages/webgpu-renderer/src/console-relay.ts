@@ -66,11 +66,18 @@ function startRelay(tag?: string) {
     window.onerror = (msg, source, line, col, err) => {
       const text = err?.stack ? `${err.stack}` : `${msg} (${source}:${line}:${col})`
       relay('error', '[UNCAUGHT]', text)
-      // Don't prevent default — let browser devtools also see it
       return false
     }
     window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
       relay('error', '[UNHANDLED REJECTION]', e.reason?.stack ?? String(e.reason))
+    })
+  }
+
+  // Expose a helper so WebGPU device code can register uncapturederror listeners
+  ;(window as any).__relayGPUError = (device: GPUDevice) => {
+    device.addEventListener('uncapturederror', (e: Event) => {
+      const err = (e as GPUUncapturedErrorEvent).error
+      relay('error', '[WebGPU]', err.message || String(err))
     })
   }
 
