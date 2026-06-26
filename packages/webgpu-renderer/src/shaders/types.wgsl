@@ -33,7 +33,7 @@ struct Material {
   metalness: f32,          // [0,1] — 0=dielectric, 1=metal (F0 = baseColor)
   envIntensity: f32,       // [0,∞] — environment map multiplier
   specularStrength: f32,   // [0,∞] — direct specular (Cook-Torrance) multiplier
-  ambientStrength: f32,    // [0,∞] — unused (reserved)
+  ambientStrength: f32,    // [0,∞] — IBL multiplier (scales diffuse+specular environment)
   baseColorTint: vec3<f32>,// linear RGB base color (parsed from hex #RRGGBB)
   _pad: f32,               // struct alignment: vec3 requires 16-byte start
 };

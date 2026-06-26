@@ -26,6 +26,8 @@
 //   2. Direct diffuse:   (1 - F) × (1 - metalness) / π      (Lambertian, energy-conserving)
 //   3. IBL specular:     prefiltered × (F₀ × scale + bias)  (split-sum)
 //   4. IBL diffuse:      kD × irradiance                    (irradiance map × albedo × kD)
+//   5. Ambient strength: (diffuseIBL + specularIBL) × ambientStrength
+//      Scales the entire environment contribution — the main knob for fill light intensity.
 //
 // Key formulas:
 //   Fresnel (Schlick):       F = F₀ + (1 - F₀) × (1 - NdotV)⁵
@@ -141,7 +143,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
   let brdf: vec2<f32> = textureSample(brdfLUT, iblSampler, vec2<f32>(NdotV, material.roughness)).rg;
   let specularIBL: vec3<f32> = prefiltered * (f0 * brdf.x + brdf.y) * material.envIntensity;
 
-  let ambientIBL: vec3<f32> = diffuseIBL + specularIBL;
+  let ambientIBL: vec3<f32> = (diffuseIBL + specularIBL) * material.ambientStrength;
 
   // Combine: ambient IBL (always present) + direct light (modulated by shadow)
   let lit: vec3<f32> = ambientIBL + (directDiffuse + directSpecular) * NdotL * lightIntensity * shadowVis;
