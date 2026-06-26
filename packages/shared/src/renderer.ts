@@ -19,6 +19,8 @@ export interface Renderer {
   loadModel(url: string): Promise<number>;
   /** Update material properties. */
   setMaterial(props: MaterialProps): void;
+  /** Change the environment map. Re-initializes IBL textures. */
+  setEnvMap(url: string): Promise<void>;
   /** Handle container resize. */
   resize(): void;
   /** Full teardown. */

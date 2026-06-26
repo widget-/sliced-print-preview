@@ -230,6 +230,10 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.writeMaterialUBO();
   }
 
+  async setEnvMap(url: string): Promise<void> {
+    await this.pipeline.setEnvMap(url);
+  }
+
   resize(): void {
     if (!this.context || !this._mounted) return;
     const canvas = this.context.canvas as HTMLCanvasElement;
@@ -300,8 +304,7 @@ export class WebGPURenderer implements Renderer {
 
     // Apply Halton jitter to the projection for TAA
     if (this.pipeline.taaEnabled) {
-      const jx = SlicedPipeline.halton2(this.pipeline.taaFrame);
-      const jy = SlicedPipeline.halton3(this.pipeline.taaFrame);
+      const [jx, jy] = SlicedPipeline.getTAAJitter(this.pipeline.taaFrame);
       SlicedPipeline.jitterProj(this.camera.proj, jx, jy, w, h);
       // Recompute viewProj with jittered projection
       const vp = new Float32Array(16);

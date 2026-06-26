@@ -78,6 +78,7 @@ export class SlicedPipeline {
   compositeBG!: GPUBindGroup;
   compositePipe!: GPURenderPipeline;
   offscreenFormat: GPUTextureFormat = 'rgba8unorm';
+  taaFormat: GPUTextureFormat = 'rgba16float';
 
   // Bilateral blur (SSAO smoothing)
   blurMod!: GPUShaderModule;
@@ -124,6 +125,7 @@ export class SlicedPipeline {
   iblPipeline!: IBLPipeline;
   iblBGL!: GPUBindGroupLayout;
   iblBG!: GPUBindGroup;
+  _envMapUrl = 'ferndale_studio_07_1k.hdr';
 
   // Debug texture preview
   debugBGL!: GPUBindGroupLayout;
@@ -438,7 +440,7 @@ export class SlicedPipeline {
     this.taaMod = d.createShaderModule({ code: taaResolveWgsl });
     this.taaBGL = d.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
@@ -453,7 +455,7 @@ export class SlicedPipeline {
       vertex: { module: this.taaMod, entryPoint: 'vs_fullscreen' },
       fragment: { module: this.taaMod, entryPoint: 'fs_taa', targets: [
         { format: this.offscreenFormat, writeMask: 15 },
-        { format: this.offscreenFormat, writeMask: 15 },
+        { format: this.taaFormat, writeMask: 15 },
       ]},
       primitive: { topology: 'triangle-list' },
     });
@@ -471,12 +473,12 @@ export class SlicedPipeline {
 
     // ── IBL pipeline: load HDR, generate cubemap ──
     this.iblPipeline = new IBLPipeline(d);
-    await this.iblPipeline.init('/horn-koppe_spring_1k.hdr');
+    await this.iblPipeline.init('/' + this._envMapUrl);
     this.iblBG = d.createBindGroup({
       layout: this.iblBGL,
       entries: [
         { binding: 0, resource: this.iblPipeline.irradianceMap.createView({ dimension: 'cube' }) },
-        { binding: 1, resource: this.iblPipeline.prefilterMap.createView({ dimension: 'cube' }) },
+        { binding: 1, resource: this.iblPipeline.prefilterMap.createView({ dimension: 'cube', mipLevelCount: this.iblPipeline.prefilterMap.mipLevelCount }) },
         { binding: 2, resource: this.iblPipeline.brdfLUT.createView() },
         { binding: 3, resource: this.iblPipeline.iblSampler },
       ],
@@ -633,6 +635,24 @@ export class SlicedPipeline {
     ]));
   }
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
+
+  /** Reload the IBL environment map from a new HDRI. Re-generates cubemap, irradiance, prefilter, BRDF LUT. */
+  async setEnvMap(url: string) {
+    this._envMapUrl = url;
+    if (!this.iblPipeline) return;
+    this.iblPipeline.dispose();
+    this.iblPipeline = new IBLPipeline(this.device);
+    await this.iblPipeline.init('/' + url);
+    this.iblBG = this.device.createBindGroup({
+      layout: this.iblBGL,
+      entries: [
+        { binding: 0, resource: this.iblPipeline.irradianceMap.createView({ dimension: 'cube' }) },
+        { binding: 1, resource: this.iblPipeline.prefilterMap.createView({ dimension: 'cube', mipLevelCount: this.iblPipeline.prefilterMap.mipLevelCount }) },
+        { binding: 2, resource: this.iblPipeline.brdfLUT.createView() },
+        { binding: 3, resource: this.iblPipeline.iblSampler },
+      ],
+    });
+  }
   writeCameraUBO(camera: OrbitCamera) {
     const d = new Float32Array(36);
     d.set(camera.viewProj, 0);
@@ -789,9 +809,9 @@ export class SlicedPipeline {
     this.compositeTex = d.createTexture({
       size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
-    // Two history textures for ping-pong (read one, write the other)
+    // Two history textures for ping-pong (read one, write the other) — float precision
     this.historyTex = [0, 1].map(() => d.createTexture({
-      size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      size: [w, h], format: this.taaFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     }));
     this._historyIndex = 0;
 
@@ -864,6 +884,16 @@ export class SlicedPipeline {
     let f = 1, r = 0;
     while (i > 0) { f /= 3; r += (i % 3) * f; i = Math.floor(i / 3); }
     return r - 0.5;
+  }
+  /** 8-sample periodic jitter pattern (first 8 Halton(2,3) samples, shifted to [-0.5, 0.5]).
+   *  Cycling ensures the TAA converges to the exact same set of sub-pixel positions each
+   *  cycle, eliminating beat-frequency oscillation on high-frequency detail (moire, layer lines). */
+  static taaJitterPattern: [number, number][] = Array.from({ length: 8 }, (_, i) =>
+    [SlicedPipeline.halton2(i), SlicedPipeline.halton3(i)]
+  );
+  /** Get the jitter offset for a given frame index (wraps through the pattern). */
+  static getTAAJitter(frame: number): [number, number] {
+    return SlicedPipeline.taaJitterPattern[frame % SlicedPipeline.taaJitterPattern.length];
   }
   /** Apply sub-pixel jitter to a column-major projection matrix in-place. */
   static jitterProj(proj: Float32Array, jitterX: number, jitterY: number, w: number, h: number) {

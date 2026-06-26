@@ -42,6 +42,7 @@ const props = withDefaults(defineProps<{
   ssaoEnabled?: boolean;
   /** Debug preview mode for WebGPU renderer. */
   debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'velocity' | 'composite-taa';
+  envMapUrl?: string;
 }>(), {
   rendererType: 'webgl2',
   roughness: 0.10,
@@ -51,6 +52,7 @@ const props = withDefaults(defineProps<{
   ambientStrength: 0.5,
   baseColorTint: '#e8e0d4',
   debugPreview: 'none',
+  envMapUrl: 'ferndale_studio_07_1k.hdr',
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
 
@@ -96,6 +98,14 @@ function onMaterialChange() {
 watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled], onMaterialChange);
 // Forward debugPreview to the WebGPU renderer
 watch(() => props.debugPreview, (v) => { if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none'; });
+// Reload env map when the user picks a different HDRI
+watch(() => props.envMapUrl, (url) => {
+  if (webgpuRenderer) {
+    webgpuRenderer.setEnvMap(url);
+  } else {
+    loadEnvMap(url);
+  }
+});
 
 let engine: Engine;
 let scene: Scene;
@@ -111,9 +121,10 @@ let envMapTexture: RawTexture | null = null;
 let taaPipeline: TAARenderingPipeline | null = null;
 let fxaaProcess: FxaaPostProcess | null = null;
 
-async function loadEnvMap() {
+async function loadEnvMap(url?: string) {
+  const hdrUrl = url || props.envMapUrl;
   try {
-    const resp = await fetch('/horn-koppe_spring_1k.hdr');
+    const resp = await fetch('/' + hdrUrl);
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const buf = await resp.arrayBuffer();
     const uint8 = new Uint8Array(buf);

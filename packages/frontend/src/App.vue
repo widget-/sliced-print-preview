@@ -31,6 +31,10 @@
         <input type="range" min="0" max="1" step="0.01" v-model.number="metalness" />
         <label>Env Intensity <span>{{ envIntensity.toFixed(2) }}</span></label>
         <input type="range" min="0" max="2" step="0.01" v-model.number="envIntensity" />
+        <label>Environment</label>
+        <select v-model="envMapUrl" class="renderer-select">
+          <option v-for="f in envMapFiles" :key="f" :value="f">{{ f.replace(/_/g, ' ').replace(/\.hdr$/, '') }}</option>
+        </select>
         <label>Specular <span>{{ specularStrength.toFixed(2) }}</span></label>
         <input type="range" min="0" max="1" step="0.01" v-model.number="specularStrength" />
         <label>Ambient <span>{{ ambientStrength.toFixed(2) }}</span></label>
@@ -70,6 +74,7 @@
         :specularStrength="specularStrength"
         :ambientStrength="ambientStrength"
         :baseColorTint="baseColorTint"
+        :envMapUrl="envMapUrl"
         :ssaoEnabled="ssaoEnabled"
         :debugPreview="rendererType === 'webgpu' ? debugPreview : 'none'"
         @model-loaded="onModelLoaded"
@@ -97,6 +102,14 @@ const specularStrength = ref(1.0);
 const ambientStrength = ref(0.5);
 const baseColorTint = ref('#e8e0d4');
 const ssaoEnabled = ref(true);
+const envMapUrl = ref('ferndale_studio_07_1k.hdr');
+const envMapFiles = [
+  'ferndale_studio_07_1k.hdr',
+  'ferndale_studio_12_1k.hdr',
+  'horn-koppe_spring_1k.hdr',
+  'photo_studio_01_1k.hdr',
+  'wooden_studio_03_1k.hdr',
+];
 
 // Feature-detect WebGPU
 let webgpuAvailable = false;
