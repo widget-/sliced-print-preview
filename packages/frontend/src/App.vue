@@ -61,6 +61,9 @@
           <option value="prefilter-up">Prefilter +Z (sky)</option>
           <option value="prefilter-fwd">Prefilter +Y (north)</option>
           <option value="prefilter-down">Prefilter -Z (ground)</option>
+          <option value="source-up">Source +Z (sky)</option>
+          <option value="source-fwd">Source +Y (north)</option>
+          <option value="source-down">Source -Z (ground)</option>
           <option value="shadow">Shadow Map</option>
           <option value="velocity">Velocity</option>
           <option value="composite-taa">Composite (TAA input)</option>

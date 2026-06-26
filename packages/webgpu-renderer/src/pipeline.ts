@@ -976,6 +976,21 @@ export class SlicedPipeline {
         if (!view) return;
         floatMode = true;
         break;
+      case 'source-up':
+        view = this.iblPipeline?.envCubemap.createView({ dimension: '2d', baseArrayLayer: 4, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
+        break;
+      case 'source-fwd':
+        view = this.iblPipeline?.envCubemap.createView({ dimension: '2d', baseArrayLayer: 2, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
+        break;
+      case 'source-down':
+        view = this.iblPipeline?.envCubemap.createView({ dimension: '2d', baseArrayLayer: 5, arrayLayerCount: 1, baseMipLevel: 0, mipLevelCount: 1 });
+        if (!view) return;
+        floatMode = true;
+        break;
       case 'color':
         view = this.offscreenColorTex.createView();
         break;
