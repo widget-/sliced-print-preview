@@ -359,6 +359,7 @@ export class WebGPURenderer implements Renderer {
       });
       this.pipeline.drawBody(offPass);
       this.pipeline.drawCaps(offPass);
+      this.pipeline.drawGround(offPass);
       offPass.end();
     }
 

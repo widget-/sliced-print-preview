@@ -14,6 +14,7 @@ import shadowWgsl from './shaders/shadow.wgsl?raw';
 import velocityWgsl from './shaders/velocity.wgsl?raw';
 import taaResolveWgsl from './shaders/taa_resolve.wgsl?raw';
 import { IBLPipeline } from './ibl';
+import groundWgsl from './shaders/ground.wgsl?raw';
 
 const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 
@@ -136,6 +137,16 @@ export class SlicedPipeline {
   debugDepthPipe!: GPURenderPipeline;
   // Passthrough copy (SSAO-off path)
   copyPipe!: GPURenderPipeline;
+
+  // Ground plane
+  groundVB!: GPUBuffer;
+  groundIB!: GPUBuffer;
+  groundBGL!: GPUBindGroupLayout;
+  groundBG!: GPUBindGroup;
+  groundPipe!: GPURenderPipeline;
+  groundShadowBGL!: GPUBindGroupLayout;
+  groundShadowBG!: GPUBindGroup;
+  groundShadowPipe!: GPURenderPipeline;
 
   material: MaterialUniforms = {
     roughness: 0.10, metalness: 0, envIntensity: 1.0,
@@ -484,6 +495,66 @@ export class SlicedPipeline {
     this.arcFixupPipe = d.createComputePipeline({
       layout: cPL,
       compute: { module: cullMod, entryPoint: 'cs_arc_fixup' },
+    });
+
+    // ── Ground plane ──
+    const GROUND_SIZE = 200;
+    const GROUND_Z = -3;
+    const groundVerts = new Float32Array([
+      -GROUND_SIZE, -GROUND_SIZE, GROUND_Z,
+       GROUND_SIZE, -GROUND_SIZE, GROUND_Z,
+       GROUND_SIZE,  GROUND_SIZE, GROUND_Z,
+      -GROUND_SIZE,  GROUND_SIZE, GROUND_Z,
+    ]);
+    const groundIndices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    this.groundVB = d.createBuffer({
+      size: groundVerts.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true,
+    });
+    new Float32Array(this.groundVB.getMappedRange()).set(groundVerts);
+    this.groundVB.unmap();
+    this.groundIB = d.createBuffer({
+      size: groundIndices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true,
+    });
+    new Uint16Array(this.groundIB.getMappedRange()).set(groundIndices);
+    this.groundIB.unmap();
+
+    const groundMod = d.createShaderModule({ code: groundWgsl });
+    // Ground main pipeline: uses camera at group(0) @binding(0), shadow at group(1)
+    this.groundBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+      ],
+    });
+    const groundPL = d.createPipelineLayout({ bindGroupLayouts: [this.groundBGL, this.shadowRenderBGL] });
+    this.groundPipe = d.createRenderPipeline({
+      layout: groundPL,
+      vertex: { module: groundMod, entryPoint: 'vs_ground', buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }] },
+      fragment: { module: groundMod, entryPoint: 'fs_ground', targets: [{ format: fmt, writeMask: 15 }, { format: 'rgba8unorm', writeMask: 15 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' },
+    });
+    // Ground shadow pipeline: depth-only, uses shadowVP uniform
+    this.groundShadowBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+      ],
+    });
+    const groundShadowPL = d.createPipelineLayout({ bindGroupLayouts: [this.groundShadowBGL] });
+    this.groundShadowPipe = d.createRenderPipeline({
+      layout: groundShadowPL,
+      vertex: { module: groundMod, entryPoint: 'vs_ground_shadow', buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }] },
+      fragment: { module: groundMod, entryPoint: 'fs_ground_shadow', targets: [] },
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' },
+    });
+
+    this.groundBG = d.createBindGroup({
+      layout: this.groundBGL,
+      entries: [{ binding: 0, resource: { buffer: this.cameraBuf } }],
+    });
+    this.groundShadowBG = d.createBindGroup({
+      layout: this.groundShadowBGL,
+      entries: [{ binding: 0, resource: { buffer: this.shadowVPBuf } }],
     });
 
     // ── IBL pipeline: load HDR, generate cubemap ──
@@ -935,8 +1006,24 @@ export class SlicedPipeline {
     pass.setVertexBuffer(0, this.bodyVB[1]);
     pass.setIndexBuffer(this.bodyIB[1], 'uint16');
     pass.drawIndexed(this.bodyIC[1], this.segmentBuffers.count);
+    // Draw ground plane (receives shadows from the body above)
+    pass.setPipeline(this.groundShadowPipe);
+    pass.setBindGroup(0, this.groundShadowBG);
+    pass.setVertexBuffer(0, this.groundVB);
+    pass.setIndexBuffer(this.groundIB, 'uint16');
+    pass.drawIndexed(6, 1);
     pass.end();
     enc.popDebugGroup();
+  }
+
+  /** Draw ground plane in the main offscreen pass. */
+  drawGround(pass: GPURenderPassEncoder) {
+    pass.setPipeline(this.groundPipe);
+    pass.setBindGroup(0, this.groundBG);
+    pass.setBindGroup(1, this.shadowBG);
+    pass.setVertexBuffer(0, this.groundVB);
+    pass.setIndexBuffer(this.groundIB, 'uint16');
+    pass.drawIndexed(6, 1);
   }
 
   /** Render a debug preview of one internal texture to a render pass. */
