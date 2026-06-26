@@ -18,6 +18,7 @@ const prefilterWgsl = iblSharedWgsl + prefilterEnvmapWgsl;
 const brdfWgsl = iblSharedWgsl + brdfLutWgsl;
 
 const CUBE_SIZE = 512;
+const CUBE_MIPS = Math.log2(CUBE_SIZE) + 1; // 10 levels (0-9)
 
 // Unit cube mesh — 36 vertices (6 faces × 2 tris × 3 verts), vec4 position.
 // prettier-ignore
@@ -188,73 +189,80 @@ export class IBLPipeline {
       dimension: '2d',
       size: { width: size, height: size, depthOrArrayLayers: 6 },
       format: 'rgba16float',
+      mipLevelCount: CUBE_MIPS,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
     });
 
-    const mod = d.createShaderModule({ code: equirectToCubemapWgsl });
-    const bgl = d.createBindGroupLayout({
+    const eqMod = d.createShaderModule({ code: equirectToCubemapWgsl });
+    const eqBGL = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
-    const pipe = d.createRenderPipeline({
-      layout: d.createPipelineLayout({ bindGroupLayouts: [bgl] }),
+    const eqPipe = d.createRenderPipeline({
+      layout: d.createPipelineLayout({ bindGroupLayouts: [eqBGL] }),
       vertex: {
-        module: mod, entryPoint: 'vs_main',
+        module: eqMod, entryPoint: 'vs_main',
         buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
       },
       fragment: {
-        module: mod, entryPoint: 'fs_main',
+        module: eqMod, entryPoint: 'fs_main',
         targets: [{ format: 'rgba16float' }],
       },
       primitive: { topology: 'triangle-list' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
     });
 
-    const depthTex = d.createTexture({
-      size: [size, size], format: 'depth24plus',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-    const depthView = depthTex.createView();
-
+    const sampler = d.createSampler({ magFilter: 'linear', minFilter: 'linear' });
     const uniformBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    for (let face = 0; face < 6; face++) {
-      d.queue.writeBuffer(uniformBuf, 0, this.faceMatrices[face]);
-
-      const bg = d.createBindGroup({
-        layout: bgl,
-        entries: [
-          { binding: 0, resource: { buffer: uniformBuf } },
-          { binding: 1, resource: equirectTex.createView() },
-          { binding: 2, resource: d.createSampler({ magFilter: 'linear', minFilter: 'linear' }) },
-        ],
+    for (let mip = 0; mip < CUBE_MIPS; mip++) {
+      const mipSize = Math.max(1, size >> mip);
+      const depthTex = d.createTexture({
+        size: [mipSize, mipSize], format: 'depth24plus',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
       });
+      const depthView = depthTex.createView();
 
-      const enc = d.createCommandEncoder();
-      const pass = enc.beginRenderPass({
-        colorAttachments: [{
-          view: cubemap.createView({ dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1 }),
-          loadOp: 'clear', storeOp: 'store',
-        }],
-        depthStencilAttachment: { view: depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
-      });
-      pass.setPipeline(pipe);
-      pass.setViewport(0, 0, size, size, 0, 1);
-      pass.setVertexBuffer(0, this.cubeVB);
-      pass.setBindGroup(0, bg);
-      pass.draw(36);
-      pass.end();
-      d.queue.submit([enc.finish()]);
+      for (let face = 0; face < 6; face++) {
+        d.queue.writeBuffer(uniformBuf, 0, this.faceMatrices[face]);
+
+        const bg = d.createBindGroup({
+          layout: eqBGL,
+          entries: [
+            { binding: 0, resource: { buffer: uniformBuf } },
+            { binding: 1, resource: equirectTex.createView() },
+            { binding: 2, resource: sampler },
+          ],
+        });
+
+        const enc = d.createCommandEncoder();
+        const pass = enc.beginRenderPass({
+          colorAttachments: [{
+            view: cubemap.createView({
+              dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1,
+              baseMipLevel: mip, mipLevelCount: 1,
+            }),
+            loadOp: 'clear', storeOp: 'store',
+          }],
+          depthStencilAttachment: { view: depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+        });
+        pass.setPipeline(eqPipe);
+        pass.setViewport(0, 0, mipSize, mipSize, 0, 1);
+        pass.setVertexBuffer(0, this.cubeVB);
+        pass.setBindGroup(0, bg);
+        pass.draw(36);
+        pass.end();
+        d.queue.submit([enc.finish()]);
+      }
+      depthTex.destroy();
     }
 
-    depthTex.destroy();
     return cubemap;
   }
 
-  /** Convolve env cubemap into a 32×32 diffuse irradiance cubemap via hemisphere integration. */
   private computeIrradiance(envCubemap: GPUTexture): GPUTexture {
     const d = this.device;
     const size = 32;
@@ -333,7 +341,7 @@ export class IBLPipeline {
   private computePrefilter(envCubemap: GPUTexture): GPUTexture {
     const d = this.device;
     const size = 256;
-    const levels = 5;
+    const levels = 8;
 
     const tex = d.createTexture({
       dimension: '2d',

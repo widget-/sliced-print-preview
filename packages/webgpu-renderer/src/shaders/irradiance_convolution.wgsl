@@ -28,8 +28,8 @@ fn vs_main(@location(0) position: vec4<f32>) -> VSOut {
 fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
   let N: vec3<f32> = normalize(worldPos);
 
-  // Tangent-space basis from the normal
-  let up: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
+  // Tangent-space basis from the normal (robust against N ≈ up)
+  let up: vec3<f32> = select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(N.z) < 0.999);
   let right: vec3<f32> = normalize(cross(up, N));
   let localUp: vec3<f32> = cross(N, right);
 

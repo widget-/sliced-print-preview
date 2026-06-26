@@ -24,9 +24,9 @@ fn vs_main(@location(0) position: vec4<f32>) -> VSOut {
 fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
   let dir = normalize(worldPos);
   // Spherical coords from direction
-  let phi = atan2(dir.z, dir.x);
-  let theta = asin(dir.y);
-  let uv = vec2<f32>(phi * 0.1591549 + 0.5, theta * 0.3183099 + 0.5);
+  let phi = atan2(dir.x, dir.z);
+  let theta = asin(dir.z);
+  let uv = vec2<f32>(phi * 0.1591549 + 0.5, 0.5 - theta * 0.3183099);
   let color = textureSample(equirectTex, equirectSampler, uv).rgb;
   return vec4<f32>(color, 1.0);
 }

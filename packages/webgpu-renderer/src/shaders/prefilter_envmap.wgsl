@@ -16,6 +16,17 @@
 // hammersley, importanceSampleGGX
 
 const SAMPLE_COUNT: u32 = 4096u;
+const CUBEMAP_RES: f32 = 512.0; // source cubemap resolution (per face)
+
+// PDF-based mip level selection (ref: LearnOpenGL, Karis 2013)
+// Computes the appropriate LOD for sampling the source environment map
+// based on the sample's PDF — clustered (high-PDF) samples read higher LODs
+// to prevent aliasing when many samples hit nearby texels.
+fn computeMipLevel(pdf: f32, roughness: f32) -> f32 {
+  let saTexel: f32 = 4.0 * PI_IBL / (6.0 * CUBEMAP_RES * CUBEMAP_RES);
+  let saSample: f32 = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
+  return select(0.5 * log2(saSample / saTexel), 0.0, roughness == 0.0);
+}
 
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
@@ -42,12 +53,19 @@ fn fs_main(@location(0) worldPos: vec3<f32>) -> @location(0) vec4<f32> {
 
   for (var i: u32 = 0u; i < SAMPLE_COUNT; i++) {
     let xi: vec2<f32> = hammersley(i, SAMPLE_COUNT);
-    let H: vec3<f32> = importanceSampleGGX(xi, roughness);
+    let H: vec3<f32> = importanceSampleGGX(xi, N, roughness);
     let L: vec3<f32> = normalize(2.0 * dot(V, H) * H - V);
 
     let NdotL: f32 = max(dot(N, L), 0.0);
     if (NdotL > 0.0) {
-      prefiltered += textureSampleLevel(envMap, envSampler, L, 0.0).rgb * NdotL;
+      // PDF-based mip level: clustered (high-PDF) samples read higher LODs
+      // to prevent aliasing — the core of proper specular prefiltering
+      let NdotH: f32 = max(dot(N, H), 0.0);
+      let HdotV: f32 = max(dot(H, V), 0.0);
+      let pdf: f32 = distributionGGX(NdotH, roughness) * NdotH / (4.0 * HdotV) + 0.0001;
+      let mipLevel: f32 = computeMipLevel(pdf, roughness);
+
+      prefiltered += textureSampleLevel(envMap, envSampler, L, mipLevel).rgb * NdotL;
       totalWeight += NdotL;
     }
   }
