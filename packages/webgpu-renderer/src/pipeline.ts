@@ -200,7 +200,7 @@ export class SlicedPipeline {
     this.ssaoMod = d.createShaderModule({ code: ssaoWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.25, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
 
     // SSAO bind group layout (group 0): depth + params + screenSize
     this.ssaoBGL = d.createBindGroupLayout({
