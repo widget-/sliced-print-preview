@@ -81,11 +81,11 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> TAAOutput {
   let velDiff: f32 = length(historyVelocity - velocity);
   let disocclusion: f32 = smoothstep(0.001, 0.02, velDiff);
 
-  // Velocity-adaptive blend: static areas use more current frame to converge
-  // jittered sub-pixel samples quickly, reducing moire flicker on fine detail.
-  // Moving areas use more history for smoother motion.
+  // Velocity-adaptive blend: mostly history for moire suppression, but enough
+  // current frame (10%) so the image converges to sharp over ~10 frames.
+  // High-frequency detail gets a gentle extra nudge toward history.
   let motionBlend: f32 = smoothstep(0.001, 0.01, length(velocity));
-  let adaptiveBlend: f32 = mix(0.3, params.blendFactor, motionBlend);
+  let adaptiveBlend: f32 = mix(0.15, params.blendFactor, motionBlend);
 
   // 3×3 neighborhood for AABB clipping
   let offsets: array<vec2<i32>, 8> = array<vec2<i32>, 8>(
@@ -112,11 +112,12 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> TAAOutput {
   cMin = cMin - varianceExpand;
   cMax = cMax + varianceExpand;
 
-  // High-frequency (moire) boost: areas with strong local contrast need faster
-  // convergence to suppress shimmer from sub-pixel jitter on fine detail
+  // Moire suppression: high-frequency detail (layer lines) gets a gentle extra
+  // nudge toward history. Reduces blend by at most 40% on the strongest edges.
+  // This is subtle — the 90% history base does the heavy lifting.
   let localRange: f32 = max(max(cMax.r - cMin.r, cMax.g - cMin.g), cMax.b - cMin.b);
-  let highFreqBoost: f32 = smoothstep(0.05, 0.3, localRange);
-  let effectiveBlend: f32 = max(max(adaptiveBlend, disocclusion), highFreqBoost);
+  let moireFactor: f32 = 1.0 - 0.4 * smoothstep(0.05, 0.3, localRange);
+  let effectiveBlend: f32 = max(adaptiveBlend * moireFactor, disocclusion);
 
   // Tonemap before clipping for better HDR handling (ref: Filament, Godot)
   let currentTone: vec3<f32> = tonemap(currentColor.rgb);
