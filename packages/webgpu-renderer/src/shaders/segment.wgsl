@@ -1,3 +1,16 @@
+// ── Body vertex shader ──
+//
+// Transforms 2D cross-section vertices (XY) into 3D world space (Z-up).
+// The cross-section lives in XY (X = width, Y = height), extruded along Z.
+// The vertex shader maps:
+//   geometry Y  → world Z  (up direction, via upDir = (0,0,1) on line 65)
+//   geometry X  → world right direction (perpendicular to segment tangent)
+//   geometry Z  → world forward direction (along segment tangent)
+//   geometry normal (0,1,0) → world (0,0,1) = top face (facing +Z = sky)
+//   geometry normal (0,-1,0) → world (0,0,-1) = bottom face (facing -Z = ground)
+//
+// See types.wgsl for struct definitions and full binding layout.
+
 @vertex
 fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   // Cull if this segment isn't assigned to this LOD level

@@ -86,7 +86,6 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> TAAOutput {
   // Moving areas use more history for smoother motion.
   let motionBlend: f32 = smoothstep(0.001, 0.01, length(velocity));
   let adaptiveBlend: f32 = mix(0.3, params.blendFactor, motionBlend);
-  let effectiveBlend: f32 = max(adaptiveBlend, disocclusion);
 
   // 3×3 neighborhood for AABB clipping
   let offsets: array<vec2<i32>, 8> = array<vec2<i32>, 8>(
@@ -112,6 +111,12 @@ fn fs_taa(@builtin(position) pos: vec4<f32>) -> TAAOutput {
   let varianceExpand: vec3<f32> = abs(cMean - aabbCenter) * 0.5;
   cMin = cMin - varianceExpand;
   cMax = cMax + varianceExpand;
+
+  // High-frequency (moire) boost: areas with strong local contrast need faster
+  // convergence to suppress shimmer from sub-pixel jitter on fine detail
+  let localRange: f32 = max(max(cMax.r - cMin.r, cMax.g - cMin.g), cMax.b - cMin.b);
+  let highFreqBoost: f32 = smoothstep(0.05, 0.3, localRange);
+  let effectiveBlend: f32 = max(max(adaptiveBlend, disocclusion), highFreqBoost);
 
   // Tonemap before clipping for better HDR handling (ref: Filament, Godot)
   let currentTone: vec3<f32> = tonemap(currentColor.rgb);

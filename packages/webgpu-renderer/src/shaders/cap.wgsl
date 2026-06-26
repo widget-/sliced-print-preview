@@ -1,3 +1,11 @@
+// ── Cap (rounded end) vertex shader ──
+//
+// Same coordinate mapping as segment.wgsl:
+//   geometry Y  → world Z  (upDir = (0,0,1))
+//   geometry X  → world right direction
+//   geometry Z  → world forward (along segment tangent)
+// The cap dome (bulge) faces outward along the segment tangent.
+
 @vertex
 fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let capInfo: vec2<f32> = capInstances[ii];
