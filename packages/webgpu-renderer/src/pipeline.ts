@@ -175,13 +175,13 @@ export class SlicedPipeline {
   /** Shadow PCF kernel radius multiplier (1=1 texel, 2=2 texels, etc). */
   shadowSoftness = 2.0;
   /** Contact shadow ray max distance in world units. */
-  contactShadowDist = 0.05;
+  contactShadowDist = 2.0;
   /** Contact shadow visibility strength (0=off, 1=full). */
   contactShadowStrength = 1.0;
   /** SSAO sampling radius. */
   ssaoRadius = 0.06;
   /** SSAO occlusion intensity. */
-  ssaoIntensity = 0.35;
+  ssaoIntensity = 0.8;
 
   constructor(device: GPUDevice) { this.device = device; }
 
@@ -259,7 +259,7 @@ export class SlicedPipeline {
     const ssaoMainMod = d.createShaderModule({ code: ssaoMainWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.35, 0.01, 1.5, 0, 0, 0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.8, 0.01, 1.5, 0, 0, 0, 0]));
     this.ssaoProjBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     // Cosine-weighted hemisphere kernel: 32 samples.

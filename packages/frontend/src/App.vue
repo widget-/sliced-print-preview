@@ -39,7 +39,7 @@
         <SliderControl label="Fill Light" v-model="fillLightIntensity" :max="3" :step="0.01" :decimals="1" />
         <SliderControl label="Shadow Softness" v-model="shadowSoftness" :min="0.5" :max="6" :step="0.1" :decimals="1" />
         <SliderControl label="Contact Shadows" v-model="contactShadowStrength" :max="1" :step="0.01" />
-        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="0.5" :step="0.001" :decimals="3" />
+        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="5" :step="0.01" :decimals="2" />
         <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="2" :step="0.01" />
         <label>Color</label>
         <input type="color" v-model="baseColorTint" class="color-picker" />
@@ -123,9 +123,9 @@ const ssaoEnabled = ref(true);
 const shadowSoftness = ref(2.0);
 const keyLightIntensity = ref(1.0);
 const fillLightIntensity = ref(0.4);
-const contactShadowDist = ref(0.05);
+const contactShadowDist = ref(2.0);
 const contactShadowStrength = ref(1.0);
-const ssaoIntensity = ref(0.35);
+const ssaoIntensity = ref(0.8);
 const ssaoRadius = ref(0.06);
 const envMapUrl = ref('ferndale_studio_07_1k.hdr');
 const envMapFiles = [

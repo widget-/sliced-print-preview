@@ -63,9 +63,9 @@ const props = withDefaults(defineProps<{
   shadowSoftness: 2.0,
   keyLightIntensity: 1.0,
   fillLightIntensity: 0.4,
-  contactShadowDist: 0.05,
+  contactShadowDist: 2.0,
   contactShadowStrength: 1.0,
-  ssaoIntensity: 0.35,
+  ssaoIntensity: 0.8,
   ssaoRadius: 0.06,
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
