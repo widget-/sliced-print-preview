@@ -65,11 +65,13 @@ fn fs_ground_shadow() {}
 @group(1) @binding(0) var shadowTex: texture_depth_2d;
 @group(1) @binding(1) var shadowSampler: sampler_comparison;
 @group(1) @binding(2) var<uniform> shadowVP: mat4x4<f32>;
+@group(1) @binding(3) var<uniform> shadowParams: vec4<f32>; // x=softness
 
 // ── group(3): Secondary (fill) light shadow ──
 @group(3) @binding(0) var shadowTex2: texture_depth_2d;
 @group(3) @binding(1) var shadowSampler2: sampler_comparison;
 @group(3) @binding(2) var<uniform> shadowVP2: mat4x4<f32>;
+@group(3) @binding(4) var<uniform> shadowParams2: vec4<f32>; // x=softness
 
 // ── Shadow helpers (PCF — rotated Vogel disk + receiver-plane bias) ──
 
@@ -94,7 +96,7 @@ fn computeReceiverPlaneDepthBias(p: vec3<f32>) -> vec2<f32> {
   ) * inv_det;
 }
 
-fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x4<f32>, worldPos: vec3<f32>, clipPos: vec4<f32>) -> f32 {
+fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x4<f32>, softness: f32, worldPos: vec3<f32>, clipPos: vec4<f32>) -> f32 {
   let shadowClip: vec4<f32> = vp * vec4<f32>(worldPos, 1.0);
   let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
   let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
@@ -107,10 +109,11 @@ fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x
   var vis: f32 = 1.0;
   if (inFrustum) {
     let texelSize: f32 = 1.0 / 1024.0;
+    let radius: f32 = texelSize * softness;
     let phi: f32 = interleavedGradientNoise(clipPos.xy) * 6.283185307;
     var sum: f32 = 0.0;
     for (var i: u32 = 0u; i < 12u; i++) {
-      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * texelSize * 2.0;
+      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * radius;
       let uv: vec2<f32> = clamp(shadowUV + offset, vec2<f32>(0.0), vec2<f32>(1.0));
       let perSampleBias: f32 = dot(dz_duv, offset);
       let refZ: f32 = clamp(shadowNDC.z + perSampleBias, 0.0, 1.0);
@@ -132,8 +135,8 @@ fn fs_ground(in: VSOut) -> FragOut {
   let groundColor: vec3<f32> = vec3<f32>(0.35, 0.33, 0.30);
 
   // Shadow from both lights
-  let shadowVis1: f32 = computeGroundShadow(shadowTex, shadowSampler, shadowVP, in.worldPos, in.clipPos);
-  let shadowVis2: f32 = computeGroundShadow(shadowTex2, shadowSampler2, shadowVP2, in.worldPos, in.clipPos);
+  let shadowVis1: f32 = computeGroundShadow(shadowTex, shadowSampler, shadowVP, shadowParams.x, in.worldPos, in.clipPos);
+  let shadowVis2: f32 = computeGroundShadow(shadowTex2, shadowSampler2, shadowVP2, shadowParams2.x, in.worldPos, in.clipPos);
 
   // Combined shadow visibility with ambient fill (both lights)
   let ambientFill: f32 = 0.15;

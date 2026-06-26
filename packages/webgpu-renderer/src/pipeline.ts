@@ -102,6 +102,7 @@ export class SlicedPipeline {
   // Shadow mapping
   shadowTex!: GPUTexture;
   shadowVPBuf!: GPUBuffer;
+  shadowParamsBuf!: GPUBuffer; // f32 softness
   shadowSampler!: GPUSampler;
   shadowBGL!: GPUBindGroupLayout;
   shadowRenderBGL!: GPUBindGroupLayout;
@@ -171,6 +172,16 @@ export class SlicedPipeline {
   lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
   lightDir2: [number, number, number, number] = [-0.3, -0.2, 0.9, 0.4];
   lightDir2Buf!: GPUBuffer;
+  /** Shadow PCF kernel radius multiplier (1=1 texel, 2=2 texels, etc). */
+  shadowSoftness = 2.0;
+  /** Contact shadow ray max distance in world units. */
+  contactShadowDist = 0.05;
+  /** Contact shadow visibility strength (0=off, 1=full). */
+  contactShadowStrength = 1.0;
+  /** SSAO sampling radius. */
+  ssaoRadius = 0.06;
+  /** SSAO occlusion intensity. */
+  ssaoIntensity = 0.35;
 
   constructor(device: GPUDevice) { this.device = device; }
 
@@ -329,6 +340,8 @@ export class SlicedPipeline {
     // ── Shadow mapping ──
     this.shadowMod = d.createShaderModule({ code: shadowWgsl });
     this.shadowVPBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.shadowParamsBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    d.queue.writeBuffer(this.shadowParamsBuf, 0, new Float32Array([2.0, 0, 0, 0])); // default softness=2
     this.shadowSampler = d.createSampler({
       compare: 'less',
       magFilter: 'linear',
@@ -347,6 +360,7 @@ export class SlicedPipeline {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
     // Shadow 2 BGL (group 3 — fill light shadow + direction)
@@ -356,6 +370,7 @@ export class SlicedPipeline {
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
     // Second shadow texture + VP buffer (light 2 — fill from front-right-up)
@@ -696,6 +711,7 @@ export class SlicedPipeline {
         { binding: 0, resource: this.shadowTex.createView() },
         { binding: 1, resource: this.shadowSampler },
         { binding: 2, resource: { buffer: this.shadowVPBuf } },
+        { binding: 3, resource: { buffer: this.shadowParamsBuf } },
       ],
     });
     // Shadow pass bind group (depth-only, group 0)
@@ -714,6 +730,7 @@ export class SlicedPipeline {
         { binding: 1, resource: this.shadowSampler },
         { binding: 2, resource: { buffer: this.shadowVPBuf2 } },
         { binding: 3, resource: { buffer: this.lightDir2Buf } },
+        { binding: 4, resource: { buffer: this.shadowParamsBuf } },
       ],
     });
     this.shadowPassBG2 = this.device.createBindGroup({
@@ -806,6 +823,14 @@ export class SlicedPipeline {
   }
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
   writeLightDir2UBO() { this.device.queue.writeBuffer(this.lightDir2Buf, 0, new Float32Array(this.lightDir2)); }
+  writeShadowSoftness() { this.device.queue.writeBuffer(this.shadowParamsBuf, 0, new Float32Array([this.shadowSoftness, 0, 0, 0])); }
+  /** Write SSAO params buffer (radius, intensity, bias, power). */
+  writeSSAOParams() {
+    const d = new Float32Array(8);
+    d[0] = this.ssaoRadius; d[1] = this.ssaoIntensity; d[2] = 0.01; d[3] = 1.5;
+    const b = this.ssaoParamsBuf as GPUBuffer;
+    this.device.queue.writeBuffer(b, 0, d);
+  }
 
   /** Reload the IBL environment map from a new HDRI. Re-generates cubemap, irradiance, prefilter, BRDF LUT. */
   async setEnvMap(url: string) {
@@ -1155,11 +1180,12 @@ export class SlicedPipeline {
     const d = new Float32Array(48); // 16+16+4+4 = 40 floats, padded
     d.set(camera.invViewProj, 0);
     d.set(camera.viewProj, 16);
-    d[32] = lightDir[0]; d[33] = lightDir[1]; d[34] = lightDir[2]; d[35] = lightDir[3];
-    d[36] = 0.05;   // maxDist — 5cm in world space (fine for print detail)
+    d[32] = lightDir[0]; d[33] = lightDir[1]; d[34] = lightDir[2]; d[35] = this.contactShadowStrength;
+    d[36] = this.contactShadowDist;   // maxDist
     d[37] = 32;     // stepCount
     d[38] = 0.01;   // thickness — depth rejection threshold
     d[39] = 0.1;    // edgeFadeDist — fade to no shadow in outer 10% of screen
+    d[40] = this.contactShadowStrength; // stored at index 40 (after 16+16+4+4 = 40 floats)
     this.device.queue.writeBuffer(this.contactShadowBuf, 0, d);
   }
 

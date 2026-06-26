@@ -106,5 +106,8 @@ fn fs_contact_shadow(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   ));
   occlusion = mix(1.0, occlusion, edgeFade);
 
+  // Apply contact shadow strength (lightDir.w = strength multiplier)
+  occlusion = mix(1.0, occlusion, cs.lightDir.w);
+
   return occlusion;
 }

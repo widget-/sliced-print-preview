@@ -56,10 +56,11 @@ fn computeShadow(vp: mat4x4<f32>, tex: texture_depth_2d, smp: sampler_comparison
   var vis: f32 = 1.0;
   if (inFrustum) {
     let texelSize: f32 = 1.0 / 1024.0;
+    let radius: f32 = texelSize * shadowParams.x;
     let phi: f32 = interleavedGradientNoise(clipPos.xy) * 6.283185307;
     var sum: f32 = 0.0;
     for (var i: u32 = 0u; i < 12u; i++) {
-      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * texelSize * 2.0;
+      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * radius;
       let uv: vec2<f32> = clamp(shadowUV + offset, vec2<f32>(0.0), vec2<f32>(1.0));
       let perSampleBias: f32 = dot(dz_duv, offset);
       let refZ: f32 = clamp(shadowNDC.z + perSampleBias, 0.0, 1.0);

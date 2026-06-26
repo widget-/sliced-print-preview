@@ -214,6 +214,20 @@ export class WebGPURenderer implements Renderer {
     this._startLoop();
   }
 
+  setShadowSoftness(v: number) { this.pipeline.shadowSoftness = v; this.pipeline.writeShadowSoftness(); this._startLoop(); }
+
+  setKeyLightIntensity(v: number) { this.pipeline.lightDir[3] = v; this.pipeline.writeLightDirUBO(); this._startLoop(); }
+
+  setFillLightIntensity(v: number) { this.pipeline.lightDir2[3] = v; this.pipeline.writeLightDir2UBO(); this._startLoop(); }
+
+  setContactShadowDist(v: number) { this.pipeline.contactShadowDist = v; this._startLoop(); }
+
+  setContactShadowStrength(v: number) { this.pipeline.contactShadowStrength = v; this._startLoop(); }
+
+  setSSAOIntensity(v: number) { this.pipeline.ssaoIntensity = v; this.pipeline.writeSSAOParams(); this._startLoop(); }
+
+  setSSAORadius(v: number) { this.pipeline.ssaoRadius = v; this.pipeline.writeSSAOParams(); this._startLoop(); }
+
   async setEnvMap(url: string): Promise<void> {
     await this.pipeline.setEnvMap(url);
     this._startLoop();

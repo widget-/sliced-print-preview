@@ -61,6 +61,7 @@ struct SegmentData {
 @group(1) @binding(0) var shadowTex: texture_depth_2d;
 @group(1) @binding(1) var shadowSampler: sampler_comparison;
 @group(1) @binding(2) var<uniform> shadowVP: mat4x4<f32>;  // light VP (world → shadow clip)
+@group(1) @binding(3) var<uniform> shadowParams: vec4<f32>; // x=softness (kernel radius multiplier)
 
 // ── group(2): IBL (image-based lighting) ──
 // Three cubemap textures + one 2D BRDF LUT, all pre-computed at init time.
