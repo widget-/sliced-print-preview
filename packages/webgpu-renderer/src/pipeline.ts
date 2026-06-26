@@ -93,11 +93,32 @@ export class SlicedPipeline {
   shadowPipe!: GPURenderPipeline;
   shadowMod!: GPUShaderModule;
 
+  // Velocity buffer (for TAA reprojection)
+  velocityMod!: GPUShaderModule;
+  velocityBGL!: GPUBindGroupLayout;
+  velocityPipe!: GPURenderPipeline;
+  velocityBuf!: GPUBuffer;
+  velocityTex!: GPUTexture;
+  velocityBG!: GPUBindGroup;
+
+  // TAA resolve
+  taaMod!: GPUShaderModule;
+  taaBGL!: GPUBindGroupLayout;
+  taaPipe!: GPURenderPipeline;
+  taaParamsBuf!: GPUBuffer;
+  historyTex!: GPUTexture;
+  compositeTex!: GPUTexture;
+  taaBG!: GPUBindGroup;
+  taaEnabled = false;
+  taaFrame = 0;
+
   // Debug texture preview
   debugBGL!: GPUBindGroupLayout;
   debugDepthBGL!: GPUBindGroupLayout;
   debugPipe!: GPURenderPipeline;
   debugDepthPipe!: GPURenderPipeline;
+  // Passthrough copy (SSAO-off path)
+  copyPipe!: GPURenderPipeline;
 
   material: MaterialUniforms = {
     roughness: 0.10, metalness: 0, envIntensity: 0.25,
@@ -184,7 +205,7 @@ export class SlicedPipeline {
     // SSAO bind group layout (group 0): depth + params + screenSize
     this.ssaoBGL = d.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
@@ -194,7 +215,7 @@ export class SlicedPipeline {
     // Composite bind group layout (group 1): offscreenColor + occlusion
     this.compositeBGL = d.createBindGroupLayout({
       entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
@@ -256,7 +277,7 @@ export class SlicedPipeline {
 
     // ── Shadow pipeline (depth-only) ──
     this.shadowTex = d.createTexture({
-      size: [2048, 2048], format: 'depth32float',
+      size: [1024, 1024], format: 'depth32float',
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
     const shadowPL = d.createPipelineLayout({ bindGroupLayouts: [this.shadowBGL] });
@@ -305,12 +326,23 @@ export class SlicedPipeline {
       primitive: { topology: 'triangle-list' },
     });
 
+    // ── Passthrough copy pipeline (SSAO off: blit offscreen color → swapchain) ──
+    // Uses the same single-texture bind group layout as debug (unfilterable-float),
+    // but fs_copy_color passes RGBA through instead of grayscale.
+    const copyPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugBGL] });
+    this.copyPipe = d.createRenderPipeline({
+      layout: copyPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_copy_color', targets: [{ format: fmt }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
     // ── Bilateral blur pipeline ──
     this.blurMod = d.createShaderModule({ code: blurWgsl });
     this.blurBGL = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
@@ -549,6 +581,9 @@ export class SlicedPipeline {
     this.ssaoWidth = w;
     this.ssaoHeight = h;
 
+    // Also resize TAA textures
+    this.resizeTAA(w, h);
+
     // Blur bind groups: horizontal (occlusion→temp) and vertical (temp→occlusion)
     this.blurHorizBG = d.createBindGroup({
       layout: this.blurBGL,
@@ -622,7 +657,76 @@ export class SlicedPipeline {
       pass.draw(3);
       pass.end();
     }
-  }  /** Render shadow map (depth-only from light POV). */
+  }
+
+  /** Create/recreate TAA textures at given resolution. */
+  resizeTAA(w: number, h: number) {
+    const d = this.device;
+    for (const t of [this.velocityTex, this.compositeTex, this.historyTex]) t?.destroy();
+    this.velocityTex = d.createTexture({
+      size: [w, h], format: 'rgba8unorm', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.compositeTex = d.createTexture({
+      size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.historyTex = d.createTexture({
+      size: [w, h], format: this.offscreenFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+  }
+
+  /** Write velocity UBO (invViewProj + prevViewProj). */
+  writeVelocity(camera: import('./camera').OrbitCamera) {
+    const d = new Float32Array(32);
+    d.set(camera.invViewProj, 0);
+    d.set(camera.prevViewProj, 16);
+    this.device.queue.writeBuffer(this.velocityBuf, 0, d);
+  }
+
+  dispatchVelocity(enc: GPUCommandEncoder) {
+    if (!this.velocityBG) return;
+    const pass = enc.beginRenderPass({
+      colorAttachments: [{ view: this.velocityTex.createView(), loadOp: 'clear', storeOp: 'store' }],
+    });
+    pass.setPipeline(this.velocityPipe);
+    pass.setBindGroup(0, this.velocityBG);
+    pass.draw(3);
+    pass.end();
+  }
+
+  /** Composite to intermediate buffer, then TAA resolve + history write. */
+  dispatchTAA(enc: GPUCommandEncoder, outView: GPUTextureView) {
+    if (!this.taaBG) return;
+    const pass = enc.beginRenderPass({
+      colorAttachments: [
+        { view: outView, loadOp: 'clear', storeOp: 'store' },
+        { view: this.historyTex.createView(), loadOp: 'clear', storeOp: 'store' },
+      ],
+    });
+    pass.setPipeline(this.taaPipe);
+    pass.setBindGroup(0, this.taaBG);
+    pass.draw(3);
+    pass.end();
+    this.taaFrame++;
+  }
+
+  /** Halton(2, i) for X jitter. */
+  static halton2(i: number): number {
+    let f = 1, r = 0;
+    while (i > 0) { f /= 2; r += (i & 1) * f; i >>= 1; }
+    return r - 0.5;
+  }
+  static halton3(i: number): number {
+    let f = 1, r = 0;
+    while (i > 0) { f /= 3; r += (i % 3) * f; i = Math.floor(i / 3); }
+    return r - 0.5;
+  }
+  /** Apply sub-pixel jitter to a column-major projection matrix in-place. */
+  static jitterProj(proj: Float32Array, jitterX: number, jitterY: number, w: number, h: number) {
+    proj[8] += (jitterX * 2) / w;
+    proj[9] += (jitterY * 2) / h;
+  }
+
+  /** Render shadow map (depth-only from light POV). */
   renderShadowMap(enc: GPUCommandEncoder) {
     if (!this.segmentBuffers) return;
     enc.pushDebugGroup('shadow-map');
@@ -663,6 +767,14 @@ export class SlicedPipeline {
       case 'normal':
         view = this.normalTex.createView();
         break;
+      case 'velocity':
+        view = this.velocityTex?.createView();
+        if (!view) return;
+        break;
+      case 'composite-taa':
+        view = this.compositeTex?.createView();
+        if (!view) return;
+        break;
       case 'shadow':
         view = this.shadowTex.createView();
         depthMode = true;
@@ -685,6 +797,17 @@ export class SlicedPipeline {
     pass.draw(3); // fullscreen triangle
   }
 
+  /** Copy offscreen color texture to a swapchain pass (SSAO-disabled path). */
+  copyToSwapchain(pass: GPURenderPassEncoder) {
+    const bg = this.device.createBindGroup({
+      layout: this.debugBGL,
+      entries: [{ binding: 0, resource: this.offscreenColorTex.createView() }],
+    });
+    pass.setPipeline(this.copyPipe);
+    pass.setBindGroup(0, bg);
+    pass.draw(3);
+  }
+
   dispose() {
     for (const b of this.bodyVB) b?.destroy();
     for (const b of this.bodyIB) b?.destroy();
@@ -696,7 +819,7 @@ export class SlicedPipeline {
     this.segmentBuffers?.segmentBuffer?.destroy();
     this.segmentBuffers?.colorBuffer?.destroy();
     this.segmentBuffers?.capBuffer?.destroy();
-    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex]) t?.destroy();
+    for (const t of [this.offscreenColorTex, this.normalTex, this.ssaoDepthTex, this.ssaoOcclusionTex, this.blurTempTex, this.velocityTex, this.historyTex, this.compositeTex]) t?.destroy();
     this.ssaoParamsBuf?.destroy();
     this.shadowTex?.destroy();
     this.shadowVPBuf?.destroy();

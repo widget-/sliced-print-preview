@@ -9,11 +9,10 @@ struct SSAOParams {
   _pad: f32,
 };
 
-@group(0) @binding(0) var depthTex: texture_2d<f32>;
+@group(0) @binding(0) var depthTex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> params: SSAOParams;
 @group(0) @binding(2) var<uniform> screenSize: vec2<f32>;
 @group(0) @binding(3) var normalTex: texture_2d<f32>;
-@group(0) @binding(3) var noiseTex: texture_2d<f32>;
 
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -43,7 +42,7 @@ fn viewSpacePos(uv: vec2<f32>, z: f32) -> vec3<f32> {
 // Reconstructs view-space positions and uses proper geometric normals.
 @fragment
 fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
-  let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0).r;
+  let depth: f32 = textureLoad(depthTex, vec2<i32>(pos.xy), 0);
   if (depth >= 1.0) { return 1.0; }
 
   let linDepth: f32 = linearizeDepth(depth); // view-space Z, negative
@@ -67,19 +66,21 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   let pixelScale: f32 = (-linDepth) * params.fovScale / screenSize.y;
   let Rpx: f32 = params.radius / pixelScale; // world radius → pixel radius at this depth
   let maxDist: f32 = params.radius; // world-space range check (constant regardless of zoom)
-  let nsamp: u32 = 12u;
+  let nsamp: u32 = 6u;
   var occ: f32 = 0.0;
 
   for (var s: u32 = 0u; s < nsamp; s++) {
-    let a: f32 = f32(s) * 6.28318 / f32(nsamp);
+    let angle: f32 = f32(s) * 1.04719755; // 2π/6
+    let a: f32 = cos(angle);
+    let b: f32 = sin(angle);
     let r: f32 = (f32(s) + 1.0) / f32(nsamp) * Rpx;
-    let base: vec2<f32> = vec2<f32>(cos(a) * r, sin(a) * r);
+    let base: vec2<f32> = vec2<f32>(a * r, b * r);
     // Tiny per-pixel jitter to break up structured artifacts
     let sx: i32 = i32(pos.x + base.x + jitter.x);
     let sy: i32 = i32(pos.y + base.y + jitter.y);
     let cx: i32 = clamp(sx, 0, i32(screenSize.x) - 1);
     let cy: i32 = clamp(sy, 0, i32(screenSize.y) - 1);
-    let sd: f32 = textureLoad(depthTex, vec2<i32>(cx, cy), 0).r;
+    let sd: f32 = textureLoad(depthTex, vec2<i32>(cx, cy), 0);
     if (sd >= 1.0) { continue; }
 
     let sLinDepth: f32 = linearizeDepth(sd);
@@ -126,6 +127,12 @@ fn fs_composite(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
 fn fs_debug(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
   let v: vec4<f32> = textureLoad(debugTex, vec2<i32>(pos.xy), 0);
   return vec4<f32>(v.r, v.r, v.r, 1.0);
+}
+
+// ── Pass-through copy: sample one texture to output (used when SSAO is off) ──
+@fragment
+fn fs_copy_color(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
+  return textureLoad(debugTex, vec2<i32>(pos.xy), 0);
 }
 
 // ── Debug: display a depth texture as grayscale ──

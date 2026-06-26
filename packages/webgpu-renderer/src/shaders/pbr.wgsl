@@ -47,7 +47,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
   // NDC [-1,1] → UV [0,1] with Y flip (WebGPU NDC Y up, texture Y down)
   let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
   var shadowVis: f32 = 0.0;
-  let texel: f32 = 1.0 / 2048.0;
+  let texel: f32 = 1.0 / 1024.0;
   let bias: f32 = 0.001;
   for (var dy: i32 = -2; dy <= 2; dy++) {
     for (var dx: i32 = -2; dx <= 2; dx++) {

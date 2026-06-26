@@ -41,7 +41,7 @@ const props = withDefaults(defineProps<{
   baseColorTint?: string;
   ssaoEnabled?: boolean;
   /** Debug preview mode for WebGPU renderer. */
-  debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow';
+  debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'velocity' | 'composite-taa';
 }>(), {
   rendererType: 'webgl2',
   roughness: 0.10,

@@ -3,6 +3,7 @@ import type { MaterialProps, Renderer, ScreenshotHooks } from '@sliced/shared';
 import { loadSegbin } from '@sliced/shared';
 import { SlicedPipeline } from './pipeline';
 import { OrbitCamera } from './camera';
+import { mat4Inverse } from './math';
 import { buildSegmentBuffers, HIDDEN_ROLES } from './buffer';
 
 export class WebGPURenderer implements Renderer {
@@ -18,6 +19,7 @@ export class WebGPURenderer implements Renderer {
   ssaoEnabled = true;
   /** Debug preview: show an internal texture instead of the normal composite. */
   debugPreview: 'none' | 'depth' | 'occlusion' | 'color' | 'shadow' = 'none';
+  private _mounted = false;
   private _statsFrames = 0;
   private _statsTime = 0;
 
@@ -39,8 +41,9 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.setSSAOCamera(this.camera.near, this.camera.far, this.camera.fov);
     this.disposeControls = this.camera.attach(canvas);
 
-    this.resize();
     this.disposed = false;
+    this._mounted = true;
+    this.resize();
     this._loop();
   }
 
@@ -193,23 +196,28 @@ export class WebGPURenderer implements Renderer {
   }
 
   resize(): void {
-    if (!this.context) return;
+    if (!this.context || !this._mounted) return;
     const canvas = this.context.canvas as HTMLCanvasElement;
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     if (w === 0 || h === 0) return;
 
     // Only resize if dimensions actually changed
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
+    // NOTE: canvas.width is unsigned long (integer), clientWidth is double (may be fractional on HiDPI).
+    // Always round to integer so the size matches what _loop() reads from canvas.width,
+    // preventing a ping-pong that recreates textures every frame → GPU OOM.
+    const iw = Math.round(w);
+    const ih = Math.round(h);
+    if (canvas.width !== iw || canvas.height !== ih) {
+      canvas.width = iw;
+      canvas.height = ih;
     }
 
-    // Resize SSAO textures
-    this.pipeline.resizeSSAO(w, h);
+    // Resize SSAO textures (use integer framebuffer size, not fractional client size)
+    this.pipeline.resizeSSAO(canvas.width, canvas.height);
 
     // Update camera for new aspect ratio
-    this.camera.update(w / h);
+    this.camera.update(canvas.width / canvas.height);
     this.pipeline.writeCameraUBO(this.camera);
   }
 
@@ -236,8 +244,28 @@ export class WebGPURenderer implements Renderer {
       return;
     }
 
-    // Update camera
+    // Update camera with TAA jitter
     this.camera.update(w / h);
+
+    // Apply Halton jitter to the projection for TAA
+    if (this.pipeline.taaEnabled) {
+      const jx = SlicedPipeline.halton2(this.pipeline.taaFrame);
+      const jy = SlicedPipeline.halton3(this.pipeline.taaFrame);
+      SlicedPipeline.jitterProj(this.camera.proj, jx, jy, w, h);
+      // Recompute viewProj with jittered projection
+      const vp = new Float32Array(16);
+      for (let col = 0; col < 4; col++) {
+        for (let row = 0; row < 4; row++) {
+          vp[col * 4 + row] =
+            this.camera.proj[row] * this.camera.viewMat[col * 4] +
+            this.camera.proj[4 + row] * this.camera.viewMat[col * 4 + 1] +
+            this.camera.proj[8 + row] * this.camera.viewMat[col * 4 + 2] +
+            this.camera.proj[12 + row] * this.camera.viewMat[col * 4 + 3];
+        }
+      }
+      this.camera.viewProj.set(vp);
+      mat4Inverse(this.camera.viewProj, this.camera.invViewProj);
+    }
     this.pipeline.writeCameraUBO(this.camera);
 
     // Ensure SSAO textures are sized for current viewport
@@ -281,57 +309,41 @@ export class WebGPURenderer implements Renderer {
       offPass.end();
     }
 
-    // SSAO compute pass
-    this.pipeline.dispatchSSAO(encoder);
+    // SSAO compute pass + blur (only when enabled)
+    if (this.ssaoEnabled) {
+      this.pipeline.dispatchSSAO(encoder);
+      this.pipeline.dispatchBlur(encoder);
+    }
 
-    // Bilateral blur to smooth the per-face faceted look
-    this.pipeline.dispatchBlur(encoder);
-
+    // ── Present to swapchain ──
+    const sv = this.context.getCurrentTexture().createView();
     if (this.debugPreview !== 'none') {
-      // Debug preview: render selected texture to swapchain (scene still renders above)
-      const swapView = this.context.getCurrentTexture().createView();
       const swapPass = encoder.beginRenderPass({
-        colorAttachments: [{
-          view: swapView,
-          loadOp: 'clear',
-          storeOp: 'store',
-        }],
+        colorAttachments: [{ view: sv, loadOp: 'clear', storeOp: 'store' }],
       });
       this.pipeline.renderDebugView(swapPass, this.debugPreview);
       swapPass.end();
     } else if (this.ssaoEnabled) {
-      {
-        const swapView = this.context.getCurrentTexture().createView();
-        const swapPass = encoder.beginRenderPass({
-          colorAttachments: [{
-            view: swapView,
-            clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          }],
-        });
-        this.pipeline.composite(swapPass);
-        swapPass.end();
-      }
-    } else {
-      // Render directly to swapchain (no SSAO)
-      const swapView = this.context.getCurrentTexture().createView();
+      // Composite: offscreen color × occlusion → swapchain (1 color target)
       const swapPass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: swapView,
+          view: sv,
           clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
-          loadOp: 'clear',
-          storeOp: 'store',
+          loadOp: 'clear', storeOp: 'store',
         }],
-        depthStencilAttachment: {
-          view: this.pipeline.ssaoDepthTex.createView(),
-          depthClearValue: 1.0,
-          depthLoadOp: 'clear',
-          depthStoreOp: 'store',
-        },
       });
-      this.pipeline.drawBody(swapPass);
-      this.pipeline.drawCaps(swapPass);
+      this.pipeline.composite(swapPass);
+      swapPass.end();
+    } else {
+      // Copy offscreen color → swapchain (1 color target, no SSAO)
+      const swapPass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: sv,
+          clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
+          loadOp: 'clear', storeOp: 'store',
+        }],
+      });
+      this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
 

@@ -53,6 +53,8 @@
           <option value="depth">Depth</option>
           <option value="occlusion">SSAO Occlusion</option>
           <option value="shadow">Shadow Map</option>
+          <option value="velocity">Velocity</option>
+          <option value="composite-taa">Composite (TAA input)</option>
         </select>
       </div>
     </div>

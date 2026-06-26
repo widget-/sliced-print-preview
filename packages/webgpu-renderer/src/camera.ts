@@ -5,6 +5,8 @@
  * Spherical coordinates: alpha (azimuth), beta (polar), radius.
  * Camera position = target + sphericalToCartesian(alpha, beta, radius).
  */
+import { mat4Inverse } from './math';
+
 export class OrbitCamera {
   target: Float64Array = new Float64Array([0, 0, 0]);
   alpha = Math.PI / 4;
@@ -17,6 +19,10 @@ export class OrbitCamera {
 
   /** Column-major 4x4 view-projection matrix, written every frame. */
   viewProj = new Float32Array(16);
+  /** Column-major 4x4 view-projection matrix from the previous frame. */
+  prevViewProj = new Float32Array(16);
+  /** Column-major 4x4 inverse of current view-projection, for velocity pass. */
+  invViewProj = new Float32Array(16);
   /** Column-major 4x4 view matrix. */
   viewMat = new Float32Array(16);
   /** Column-major 4x4 projection matrix, written every frame. */
@@ -126,6 +132,9 @@ export class OrbitCamera {
     this.position[1] = this.target[1] + this.radius * sinB * sinA;
     this.position[2] = this.target[2] + this.radius * cosB;
 
+    // Save previous frame's view-projection before computing new one
+    this.prevViewProj.set(this.viewProj);
+
     // View matrix: lookAt(position, target, up=Z)
     const fwd = [
       this.target[0] - this.position[0],
@@ -183,5 +192,6 @@ export class OrbitCamera {
       }
     }
     this.viewProj.set(vp);
+    mat4Inverse(this.viewProj, this.invViewProj);
   }
 }

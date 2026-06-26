@@ -17,7 +17,7 @@ struct BlurParams {
 };
 
 @group(0) @binding(0) var blurOcclusionTex: texture_2d<f32>;
-@group(0) @binding(1) var blurDepthTex: texture_2d<f32>;
+@group(0) @binding(1) var blurDepthTex: texture_depth_2d;
 @group(0) @binding(2) var<uniform> blur: BlurParams;
 @group(0) @binding(3) var<uniform> nearFar: vec2<f32>;
 
@@ -33,7 +33,7 @@ fn vs_fullscreen(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> 
 
 @fragment
 fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
-  let centerDepth: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(pos.xy), 0).r);
+  let centerDepth: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(pos.xy), 0));
   let centerOcc: f32 = textureLoad(blurOcclusionTex, vec2<i32>(pos.xy), 0).r;
 
   var total: f32 = centerOcc;
@@ -47,7 +47,7 @@ fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     // +side
     let sx: i32 = clamp(i32(pos.x) + offset.x, 0, i32(blur.screenSize.x) - 1);
     let sy: i32 = clamp(i32(pos.y) + offset.y, 0, i32(blur.screenSize.y) - 1);
-    let sd: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(sx, sy), 0).r);
+    let sd: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(sx, sy), 0));
     let bilateral: f32 = exp(-((sd - centerDepth) * (sd - centerDepth)) * 20.0);
     let w: f32 = bilateral * spatial;
     total += textureLoad(blurOcclusionTex, vec2<i32>(sx, sy), 0).r * w;
@@ -56,7 +56,7 @@ fn fs_blur(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     // -side
     let sx2: i32 = clamp(i32(pos.x) - offset.x, 0, i32(blur.screenSize.x) - 1);
     let sy2: i32 = clamp(i32(pos.y) - offset.y, 0, i32(blur.screenSize.y) - 1);
-    let sd2: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(sx2, sy2), 0).r);
+    let sd2: f32 = linearizeDepth(textureLoad(blurDepthTex, vec2<i32>(sx2, sy2), 0));
     let bilateral2: f32 = exp(-((sd2 - centerDepth) * (sd2 - centerDepth)) * 20.0);
     let w2: f32 = bilateral2 * spatial;
     total += textureLoad(blurOcclusionTex, vec2<i32>(sx2, sy2), 0).r * w2;
