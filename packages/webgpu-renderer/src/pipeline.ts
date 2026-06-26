@@ -206,25 +206,28 @@ export class SlicedPipeline {
     const ssaoMainMod = d.createShaderModule({ code: ssaoMainWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
+    d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.35, 0.01, 1.5, 0, 0, 0, 0]));
     this.ssaoProjBuf = d.createBuffer({ size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    // Hemisphere kernel: 32 samples, more concentrated near center (ref: LearnOpenGL)
+    // Cosine-weighted hemisphere kernel: 32 samples.
+    // Random points on a disk, projected onto the hemisphere (cosine distribution).
+    // More samples near the normal = better quality for the same count.
+    // Combined with TBN orientation, this gives a natural AO distribution.
     const KERNEL_SIZE = 32;
     const kernelData = new Float32Array(KERNEL_SIZE * 4);
     for (let i = 0; i < KERNEL_SIZE; i++) {
-      // Random point in hemisphere (z > 0)
+      // Random point on unit disk (cosine-weighted → sqrt for uniform area)
+      const u = Math.random();
+      const r = Math.sqrt(u);
       const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(Math.random());
-      let x = Math.sin(phi) * Math.cos(theta);
-      let y = Math.sin(phi) * Math.sin(theta);
-      let z = Math.cos(phi);
+      let x = r * Math.cos(theta);
+      let y = r * Math.sin(theta);
+      let z = Math.sqrt(1.0 - u); // cosine falloff toward horizon
       const len = Math.sqrt(x * x + y * y + z * z);
       x /= len; y /= len; z /= len;
-      // Randomize radius, then scale by i/N to concentrate near center
-      const r = Math.random();
+      // Scale by i/KERNEL_SIZE to concentrate samples near center
       const s = i / KERNEL_SIZE;
-      const scale = (0.1 + 0.9 * s * s) * r;
+      const scale = (0.1 + 0.9 * s * s) * Math.random();
       kernelData[i * 4] = x * scale;
       kernelData[i * 4 + 1] = y * scale;
       kernelData[i * 4 + 2] = z * scale;

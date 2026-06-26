@@ -1,6 +1,8 @@
-// ── SSAO fragment shader — 3D hemisphere sampling (separate module) ──
-// Uses bindings 0-5 in group 0. Declared separately from fs_composite,
-// fs_debug etc. so they don't conflict with the shared ssao.wgsl module.
+// ── SSAO fragment shader — 3D hemisphere sampling ──
+// References:
+//   LearnOpenGL, Three.js — hemisphere kernel, TBN, projection to screen space
+//   Godot/Intel — distance fadeout, haloing reduction
+//   Babylon.js — smooth range falloff
 
 struct SSAOParams {
   radius: f32,
@@ -81,14 +83,32 @@ fn fs_ssao(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
 
     let sampleLin: f32 = linearizeDepth(sampleDepth);
     let depthDiff: f32 = sampleLin - linDepth;
-    let rangeCheck: f32 = smoothstep(0.0, params.radius, abs(depthDiff));
+
+    // Range check: edge-preserving weight.
+    // Samples at similar depth are on the same surface → high weight.
+    // Samples at very different depth cross a discontinuity → low weight.
+    // (ref: LearnOpenGL — smoothstep(0, 1, radius / abs(diff)))
+    let rangeCheck: f32 = smoothstep(0.0, 1.0, params.radius / max(abs(depthDiff), 0.001));
+
+    // Haloing reduction: when the actual surface is much further behind the
+    // sample point than expected, the occlusion may be a false positive from
+    // a different surface (e.g. a thin foreground object).
+    // (ref: Godot — clamp(-hit_delta.z * neg_inv_radius + 2.0, 0.0, 1.0))
+    let hitDelta: f32 = sampleLin - samplePos.z;
+    let haloReduce: f32 = clamp(hitDelta / params.radius + 2.0, 0.0, 1.0);
 
     if (depthDiff > params.bias) {
-      occ += 1.0 * rangeCheck;
+      occ += 1.0 * rangeCheck * haloReduce;
     }
   }
 
   occ = 1.0 - params.intensity * (occ / 32.0);
+
+  // Distance fadeout: reduce AO for distant objects (ref: Godot)
+  let viewDist: f32 = -viewPos.z;
+  let fadeOut: f32 = 1.0 - smoothstep(50.0, params.far * 0.5, viewDist);
+  occ = mix(1.0, occ, fadeOut);
+
   occ = pow(max(occ, 0.0), params.power);
   return occ;
 }
