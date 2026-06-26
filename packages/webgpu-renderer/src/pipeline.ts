@@ -7,6 +7,8 @@ import capWgsl from './shaders/cap.wgsl?raw';
 import pbrWgsl from './shaders/pbr.wgsl?raw';
 import cullWgsl from './shaders/cull.wgsl?raw';
 import ssaoWgsl from './shaders/ssao.wgsl?raw';
+import ssaoMainWgsl from './shaders/ssao_main.wgsl?raw';
+import debugDepthWgsl from './shaders/debug_depth.wgsl?raw';
 import blurWgsl from './shaders/blur.wgsl?raw';
 import shadowWgsl from './shaders/shadow.wgsl?raw';
 
@@ -200,6 +202,8 @@ export class SlicedPipeline {
 
     // ── SSAO render pass ──
     this.ssaoMod = d.createShaderModule({ code: ssaoWgsl });
+    // Separate module for fs_ssao (needs bindings 0-5, separate from composite/debug)
+    const ssaoMainMod = d.createShaderModule({ code: ssaoMainWgsl });
     this.ssaoParamsBuf = d.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.screenSizeBuf = d.createBuffer({ size: 8, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     d.queue.writeBuffer(this.ssaoParamsBuf, 0, new Float32Array([0.06, 0.25, 0.01, 1.5, 0, 0, 0, 0]));
@@ -258,8 +262,8 @@ export class SlicedPipeline {
     const ssaoPL = d.createPipelineLayout({ bindGroupLayouts: [this.ssaoBGL] });
     this.ssaoPipe = d.createRenderPipeline({
       layout: ssaoPL,
-      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_ssao', targets: [{ format: 'r32float', writeMask: 15 }] },
+      vertex: { module: ssaoMainMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: ssaoMainMod, entryPoint: 'fs_ssao', targets: [{ format: 'r32float', writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -352,11 +356,12 @@ export class SlicedPipeline {
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'depth' } },
       ],
     });
+    const debugDepthMod = d.createShaderModule({ code: debugDepthWgsl });
     const debugDepthPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugDepthBGL] });
     this.debugDepthPipe = d.createRenderPipeline({
       layout: debugDepthPL,
-      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt, writeMask: 15 }] },
+      vertex: { module: debugDepthMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: debugDepthMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
