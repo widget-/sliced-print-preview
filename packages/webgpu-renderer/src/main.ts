@@ -193,6 +193,7 @@ export class WebGPURenderer implements Renderer {
     this.device.queue.writeBuffer(this.pipeline.shadowVPBuf2, 0, computeShadowVP(ld2[0], ld2[1], ld2[2]));
 
     this.triggerGPUTiming();
+    this._startLoop();
     return Math.round(performance.now() - t0);
   }
 
@@ -315,6 +316,10 @@ export class WebGPURenderer implements Renderer {
     // Must be done before jitter modifies camera.proj in-place below.
     this.device.queue.writeBuffer(this.pipeline.ssaoProjBuf, 0, new Float32Array(this.camera.proj));
 
+    // Contact shadow also needs unjittered viewProj — save it before TAA jitter
+    const cleanViewProj = new Float32Array(this.camera.viewProj);
+    const cleanInvViewProj = new Float32Array(this.camera.invViewProj);
+
     // Apply Halton jitter to the projection for TAA
     if (this.pipeline.taaEnabled) {
       const [jx, jy] = SlicedPipeline.getTAAJitter(this.pipeline.taaFrame);
@@ -334,7 +339,7 @@ export class WebGPURenderer implements Renderer {
       mat4Inverse(this.camera.viewProj, this.camera.invViewProj);
     }
     this.pipeline.writeCameraUBO(this.camera);
-    this.pipeline.writeContactShadow(this.camera, this.pipeline.lightDir);
+    this.pipeline.writeContactShadow(cleanViewProj, cleanInvViewProj, this.pipeline.lightDir);
 
     // LOD culling compute pass (submits its own encoder)
     this.pipeline.resetIndirect();

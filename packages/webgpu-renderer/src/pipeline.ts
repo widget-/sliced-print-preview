@@ -23,6 +23,7 @@ export interface MaterialUniforms {
   roughness: number; metalness: number; envIntensity: number;
   specularStrength: number; ambientStrength: number;
   baseColorTint: [number, number, number];
+  useRoleColors?: number;
 }
 
 export class SlicedPipeline {

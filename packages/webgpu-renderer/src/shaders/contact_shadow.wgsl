@@ -20,15 +20,16 @@
 struct ContactShadowParams {
   invViewProj: mat4x4<f32>,   // world pos reconstruction
   viewProj: mat4x4<f32>,      // world→clip for ray projection
-  lightDir: vec4<f32>,        // xyz=normalized direction, w=intensity
-  params: vec4<f32>,          // x=maxDist, y=stepCount, z=thickness, w=edgeFadeDist
+  lightDir: vec4<f32>,        // xyz=normalized direction, w=strength
+  params: vec4<f32>,          // x=maxDist, y=stepCount, z=linearThickness, w=edgeFadeDist
 };
 
 @group(0) @binding(0) var depthTex: texture_depth_2d;
 @group(0) @binding(1) var<uniform> cs: ContactShadowParams;
 
 fn reconstructWorldPos(uv: vec2<f32>, depth: f32) -> vec3<f32> {
-  let ndc: vec4<f32> = vec4<f32>(uv * 2.0 - 1.0, depth, 1.0);
+  // uv is Y-down (from @builtin(position)), NDC is Y-up — flip Y to match invViewProj
+  let ndc: vec4<f32> = vec4<f32>(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth, 1.0);
   let world: vec4<f32> = cs.invViewProj * ndc;
   return world.xyz / world.w;
 }
@@ -58,7 +59,6 @@ fn fs_contact_shadow(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   let lightDir: vec3<f32> = normalize(cs.lightDir.xyz);
   let maxDist: f32 = cs.params.x;
   let stepCount: i32 = i32(cs.params.y);
-  let thickness: f32 = cs.params.z;
   let edgeFadeDist: f32 = cs.params.w;
 
   // Ray start/end in world space, projected to clip space
@@ -66,11 +66,11 @@ fn fs_contact_shadow(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   let csStart: vec4<f32> = cs.viewProj * vec4<f32>(worldPos, 1.0);
   let csEnd: vec4<f32>   = cs.viewProj * vec4<f32>(rayEnd, 1.0);
 
-  // Clip → NDC → UV
+  // Clip → NDC → UV (with Y flip: WebGPU NDC Y-up → texture UV Y-down)
   let ndcStart: vec3<f32> = csStart.xyz / csStart.w;
   let ndcEnd: vec3<f32>   = csEnd.xyz   / csEnd.w;
-  let uvStart: vec3<f32> = vec3<f32>(ndcStart.xy * 0.5 + 0.5, ndcStart.z);
-  let uvEnd: vec3<f32>   = vec3<f32>(ndcEnd.xy   * 0.5 + 0.5, ndcEnd.z);
+  let uvStart: vec3<f32> = vec3<f32>(ndcStart.x * 0.5 + 0.5, ndcStart.y * -0.5 + 0.5, ndcStart.z);
+  let uvEnd: vec3<f32>   = vec3<f32>(ndcEnd.x   * 0.5 + 0.5, ndcEnd.y   * -0.5 + 0.5, ndcEnd.z);
 
   // Screen-space ray length → adaptive step count
   let ssLen: f32 = length(uvEnd.xy - uvStart.xy);
@@ -80,6 +80,12 @@ fn fs_contact_shadow(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
   // Dither the start offset to reduce banding
   let dither: f32 = interleavedGradientNoise(pos.xy) * 0.5 + 0.5;
   var sampleUV: vec3<f32> = uvStart + step * dither;
+
+  // Adaptive depth tolerance: per-step Z change along the ray.
+  // Capped at 0.01 NDC Z to prevent over-occlusion on steep surfaces
+  // where the ray spans a large Z range (making dzTolerance too permissive).
+  // (ref: Filament — adaptive, with empirical cap)
+  let dzTolerance: f32 = min(abs(uvEnd.z - uvStart.z) / f32(steps), 0.01);
 
   var occlusion: f32 = 1.0;
   for (var i: i32 = 0; i < steps; i++) {
@@ -92,9 +98,13 @@ fn fs_contact_shadow(@builtin(position) pos: vec4<f32>) -> @location(0) f32 {
     let sampleDepth: f32 = textureLoad(depthTex, smpPos, 0i);
     let diff: f32 = sampleUV.z - sampleDepth;
 
-    // Occlusion test: ray is behind a surface but within thickness threshold
-    if (diff > 0.0 && diff < thickness) {
-      occlusion = 1.0 - f32(i) / f32(steps);
+    // Filament-style occlusion test: ray is within tolerance of the surface
+    // dzTolerance is the per-step NDC Z change — surfaces within this range
+    // are close enough to block the light (contact shadow).
+    // This naturally handles perspective compression: the tolerance is smaller
+    // near the camera (where NDC Z changes rapidly) and larger at distance.
+    if (diff > 0.0 && diff < dzTolerance) {
+      occlusion = f32(i) / f32(steps);
       break;
     }
   }
