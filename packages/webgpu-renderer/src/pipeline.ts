@@ -259,7 +259,7 @@ export class SlicedPipeline {
     this.ssaoPipe = d.createRenderPipeline({
       layout: ssaoPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_ssao', targets: [{ format: 'r32float' }] },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_ssao', targets: [{ format: 'r32float', writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -299,12 +299,12 @@ export class SlicedPipeline {
 
     for (let l = 0; l < 3; l++) this.bodyPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_main', buffers: [vx] },
-      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }, { format: 'rgba8unorm' }] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt, writeMask: 15 }, { format: 'rgba8unorm', writeMask: 15 }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     for (let l = 0; l < 2; l++) this.capPipes.push(d.createRenderPipeline({
       layout: rPL, vertex: { module: shaderMod, entryPoint: 'vs_cap', buffers: [vx] },
-      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt }, { format: 'rgba8unorm' }] },
+      fragment: { module: shaderMod, entryPoint: 'fs_main', targets: [{ format: fmt, writeMask: 15 }, { format: 'rgba8unorm', writeMask: 15 }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: ds,
     }));
     this.pipeline = this.bodyPipes[0]; this.capPipeline = this.capPipes[0];
@@ -328,7 +328,7 @@ export class SlicedPipeline {
     this.compositePipe = d.createRenderPipeline({
       layout: compPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_composite', targets: [{ format: fmt }] },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_composite', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -343,7 +343,7 @@ export class SlicedPipeline {
     this.debugPipe = d.createRenderPipeline({
       layout: debugPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug', targets: [{ format: fmt }] },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
     // Depth textures (SSAO depth, shadow map)
@@ -356,7 +356,7 @@ export class SlicedPipeline {
     this.debugDepthPipe = d.createRenderPipeline({
       layout: debugDepthPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt }] },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -367,7 +367,7 @@ export class SlicedPipeline {
     this.copyPipe = d.createRenderPipeline({
       layout: copyPL,
       vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.ssaoMod, entryPoint: 'fs_copy_color', targets: [{ format: fmt }] },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_copy_color', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -387,7 +387,7 @@ export class SlicedPipeline {
     this.blurPipe = d.createRenderPipeline({
       layout: blurPL,
       vertex: { module: this.blurMod, entryPoint: 'vs_fullscreen' },
-      fragment: { module: this.blurMod, entryPoint: 'fs_blur', targets: [{ format: 'r32float' }] },
+      fragment: { module: this.blurMod, entryPoint: 'fs_blur', targets: [{ format: 'r32float', writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
