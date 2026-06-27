@@ -328,22 +328,23 @@ export function generateCapGeometry(
   const apexIdx = domeRings * ringLen;
   setVert(apexIdx, 0, 0, 1, 0, 0, 1);
 
-  // Indices – rings
+  // Indices – rings (flipped winding: body uses r0,r1,r1_next and r0,r1_next,r0_next
+  // but the dome's curvature makes the opposite winding face outward)
   for (let j = 0; j < domeRings - 1; j++) {
     const r0 = j * ringLen;
     const r1 = (j + 1) * ringLen;
     for (let i = 0; i < ringLen; i++) {
       const nxt = (i + 1) % ringLen;
-      indices.push(r0 + i, r1 + i, r1 + nxt);
-      indices.push(r0 + i, r1 + nxt, r0 + nxt);
+      indices.push(r0 + i, r1 + nxt, r1 + i);
+      indices.push(r0 + i, r0 + nxt, r1 + nxt);
     }
   }
 
-  // Indices – last ring to apex
+  // Indices – last ring to apex (also flipped)
   const lastRing = (domeRings - 1) * ringLen;
   for (let i = 0; i < ringLen; i++) {
     const nxt = (i + 1) % ringLen;
-    indices.push(lastRing + i, lastRing + nxt, apexIdx);
+    indices.push(lastRing + i, apexIdx, lastRing + nxt);
   }
 
   return { interleaved, indices: new Uint16Array(indices) };

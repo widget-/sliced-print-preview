@@ -66,7 +66,7 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   // built with normals that have a positive Z component). For a start cap
   // we must reverse that Z so the normal points opposite fwdDir.
   let localNormal: vec3<f32> = vec3<f32>(
-    in.normal.x,
+    flipEnd * in.normal.x,
     in.normal.y,
     flipEnd * in.normal.z,
   );
