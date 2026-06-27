@@ -184,6 +184,9 @@ export class SlicedPipeline {
   ssaoRadius = 0.06;
   /** SSAO occlusion intensity. */
   ssaoIntensity = 3.0;
+  /** Stored model bounding box center for shadow VP recomputation. */
+  _modelCenter: [number, number, number] = [0, 0, 0];
+  _modelExtent: [number, number, number] = [1, 1, 1];
 
   constructor(device: GPUDevice) { this.device = device; }
 
@@ -579,7 +582,7 @@ export class SlicedPipeline {
       compute: { module: cullMod, entryPoint: 'cs_arc_fixup' },
     });
 
-    // ── Ground plane ──
+    // ── Ground plane (4 vertices, correct winding) ──
     const GROUND_SIZE = 250;
     const GROUND_Z = -3;
     const groundVerts = new Float32Array([
@@ -589,6 +592,7 @@ export class SlicedPipeline {
       -GROUND_SIZE,  GROUND_SIZE, GROUND_Z,
     ]);
     const groundIndices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    this._groundIndexCount = 6;
     this.groundVB = d.createBuffer({
       size: groundVerts.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true,
     });
@@ -605,6 +609,8 @@ export class SlicedPipeline {
     this.groundBGL = d.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
       ],
     });
     const groundPL = d.createPipelineLayout({ bindGroupLayouts: [this.groundBGL, this.shadowRenderBGL, null, this.shadowRenderBGL2] });
@@ -632,7 +638,11 @@ export class SlicedPipeline {
 
     this.groundBG = d.createBindGroup({
       layout: this.groundBGL,
-      entries: [{ binding: 0, resource: { buffer: this.cameraBuf } }],
+      entries: [
+        { binding: 0, resource: { buffer: this.cameraBuf } },
+        { binding: 1, resource: { buffer: this.materialBuf } },
+        { binding: 2, resource: { buffer: this.lightDirBuf } },
+      ],
     });
     this.groundShadowBG = d.createBindGroup({
       layout: this.groundShadowBGL,
@@ -826,6 +836,50 @@ export class SlicedPipeline {
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
   writeLightDir2UBO() { this.device.queue.writeBuffer(this.lightDir2Buf, 0, new Float32Array(this.lightDir2)); }
   writeShadowSoftness() { this.device.queue.writeBuffer(this.shadowParamsBuf, 0, new Float32Array([this.shadowSoftness, 0, 0, 0])); }
+
+  /** Store model bounding box for shadow VP recomputation. */
+  setModelBounds(cx: number, cy: number, cz: number, hw: number, hh: number, hd: number) {
+    this._modelCenter = [cx, cy, cz];
+    this._modelExtent = [hw, hh, hd];
+  }
+
+  /** Recompute and upload shadow VP for a given light direction and buffer. */
+  writeShadowVP(lx: number, ly: number, lz: number, buf: GPUBuffer) {
+    const [cx, cy, cz] = this._modelCenter;
+    const [hw, hh, hd] = this._modelExtent;
+    const maxDim = Math.max(hw, hh, hd);
+    const shadowRadius = maxDim * 5;
+    const ll = Math.sqrt(lx*lx + ly*ly + lz*lz);
+    const ldx = lx/ll, ldy = ly/ll, ldz = lz/ll;
+    const v = new Float64Array(16);
+    const p = new Float64Array(16);
+    const px = cx - ldx * shadowRadius, py = cy - ldy * shadowRadius, pz = cz - ldz * shadowRadius;
+    let fx = cx - px, fy = cy - py, fz = cz - pz;
+    const fLen = Math.sqrt(fx*fx + fy*fy + fz*fz);
+    if (fLen > 0) { fx /= fLen; fy /= fLen; fz /= fLen; }
+    let rx = fy, ry = -fx, rz = 0;
+    const rLen = Math.sqrt(rx*rx + ry*ry);
+    if (rLen > 0.001) { rx /= rLen; ry /= rLen; } else { rx = 1; ry = 0; }
+    const ux = ry*fz - rz*fy, uy = rz*fx - rx*fz, uz = rx*fy - ry*fx;
+    v[0]=rx; v[4]=ux; v[8]=-fx; v[12]=-(rx*px+ry*py+rz*pz);
+    v[1]=ry; v[5]=uy; v[9]=-fy; v[13]=-(ux*px+uy*py+uz*pz);
+    v[2]=rz; v[6]=uz; v[10]=-fz; v[14]=fx*px+fy*py+fz*pz;
+    v[3]=0; v[7]=0; v[11]=0; v[15]=1;
+    let lmnX=Infinity, lmxX=-Infinity, lmnY=Infinity, lmxY=-Infinity, lmnZ=Infinity, lmxZ=-Infinity;
+    for (const sx of [cx-hw, cx+hw]) for (const sy of [cy-hh, cy+hh]) for (const sz of [cz-hd, cz+hd]) {
+      const x=v[0]*sx+v[4]*sy+v[8]*sz+v[12], y=v[1]*sx+v[5]*sy+v[9]*sz+v[13], z=v[2]*sx+v[6]*sy+v[10]*sz+v[14];
+      if(x<lmnX)lmnX=x;if(x>lmxX)lmxX=x;if(y<lmnY)lmnY=y;if(y>lmxY)lmxY=y;if(z<lmnZ)lmnZ=z;if(z>lmxZ)lmxZ=z;
+    }
+    if(0<lmnZ)lmnZ=0;if(0>lmxZ)lmxZ=0;
+    const pad=4.0, hlw=Math.max(Math.abs(lmnX),Math.abs(lmxX))*pad, hlh=Math.max(Math.abs(lmnY),Math.abs(lmxY))*pad;
+    const zn=lmnZ-0.5, zf=lmxZ+0.5, dr=zf-zn;
+    p[0]=1/hlw;p[4]=0;p[8]=0;p[12]=0;p[1]=0;p[5]=1/hlh;p[9]=0;p[13]=0;
+    p[2]=0;p[6]=0;p[10]=1/dr;p[14]=-zn/dr;p[3]=0;p[7]=0;p[11]=0;p[15]=1;
+    const svp = new Float32Array(16);
+    for(let col=0;col<4;col++) for(let row=0;row<4;row++)
+      svp[col*4+row]=p[row]*v[col*4]+p[4+row]*v[col*4+1]+p[8+row]*v[col*4+2]+p[12+row]*v[col*4+3];
+    this.device.queue.writeBuffer(buf, 0, svp);
+  }
   /** Write SSAO params buffer (radius, intensity, bias, power). Leaves camera params at offset 16 intact. */
   writeSSAOParams() {
     const d = new Float32Array([this.ssaoRadius, this.ssaoIntensity, 0.01, 1.5]);
@@ -1198,21 +1252,16 @@ export class SlicedPipeline {
     if (this.shadowBG2) pass.setBindGroup(3, this.shadowBG2);
     pass.setVertexBuffer(0, this.groundVB);
     pass.setIndexBuffer(this.groundIB, 'uint16');
-    pass.drawIndexed(6, 1);
+    pass.drawIndexed(this._groundIndexCount, 1);
   }
 
   _groundZ = -3;
+  _groundIndexCount = 0;
 
   /** Move the ground plane to a new Z position. Rebuilds the vertex buffer. */
   setGroundZ(z: number) {
     this._groundZ = z;
-    const GROUND_SIZE = 250;
-    const verts = new Float32Array([
-      -GROUND_SIZE, -GROUND_SIZE, z,
-       GROUND_SIZE, -GROUND_SIZE, z,
-       GROUND_SIZE,  GROUND_SIZE, z,
-      -GROUND_SIZE,  GROUND_SIZE, z,
-    ]);
+    const verts = new Float32Array([-250, -250, z, 250, -250, z, 250, 250, z, -250, 250, z]);
     this.device.queue.writeBuffer(this.groundVB, 0, verts);
   }
 

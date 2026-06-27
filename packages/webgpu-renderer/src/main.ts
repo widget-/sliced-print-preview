@@ -127,70 +127,10 @@ export class WebGPURenderer implements Renderer {
     const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) / 2;
 
     // Helper to compute a shadow VP matrix for a given light direction
-    const computeShadowVP = (lx: number, ly: number, lz: number): Float32Array => {
-      const ll = Math.sqrt(lx*lx + ly*ly + lz*lz);
-      const ldx = lx/ll, ldy = ly/ll, ldz = lz/ll;
-      const shadowRadius = maxDim * 5;
-      const v = new Float64Array(16);
-      const p = new Float64Array(16);
-      const tx = cx, ty = cy, tz = cz;
-      const px = cx - ldx * shadowRadius;
-      const py = cy - ldy * shadowRadius;
-      const pz = cz - ldz * shadowRadius;
-      let fx = tx - px, fy = ty - py, fz = tz - pz;
-      const fLen = Math.sqrt(fx*fx + fy*fy + fz*fz);
-      if (fLen > 0) { fx /= fLen; fy /= fLen; fz /= fLen; }
-      let rx = fy, ry = -fx, rz = 0;
-      const rLen = Math.sqrt(rx*rx + ry*ry);
-      if (rLen > 0.001) { rx /= rLen; ry /= rLen; }
-      else { rx = 1; ry = 0; }
-      const ux = ry*fz - rz*fy;
-      const uy = rz*fx - rx*fz;
-      const uz = rx*fy - ry*fx;
-      v[0] = rx;  v[4] = ux;  v[8]  = -fx;  v[12] = -(rx*px + ry*py + rz*pz);
-      v[1] = ry;  v[5] = uy;  v[9]  = -fy;  v[13] = -(ux*px + uy*py + uz*pz);
-      v[2] = rz;  v[6] = uz;  v[10] = -fz;  v[14] =  fx*px + fy*py + fz*pz;
-      v[3] = 0;   v[7] = 0;   v[11] = 0;    v[15] = 1;
-      let lmnX = Infinity, lmxX = -Infinity, lmnY = Infinity, lmxY = -Infinity;
-      let lmnZ = Infinity, lmxZ = -Infinity;
-      for (const sx of [minX, maxX]) {
-        for (const sy of [minY, maxY]) {
-          for (const sz of [minZ, maxZ]) {
-            const x = v[0]*sx + v[4]*sy + v[8]*sz + v[12];
-            const y = v[1]*sx + v[5]*sy + v[9]*sz + v[13];
-            const z = v[2]*sx + v[6]*sy + v[10]*sz + v[14];
-            if (x < lmnX) lmnX = x; if (x > lmxX) lmxX = x;
-            if (y < lmnY) lmnY = y; if (y > lmxY) lmxY = y;
-            if (z < lmnZ) lmnZ = z; if (z > lmxZ) lmxZ = z;
-          }
-        }
-      }
-      if (0 < lmnZ) lmnZ = 0; if (0 > lmxZ) lmxZ = 0;
-      const pad = 1.5;
-      const hlw = Math.max(Math.abs(lmnX), Math.abs(lmxX)) * pad;
-      const hlh = Math.max(Math.abs(lmnY), Math.abs(lmxY)) * pad;
-      const zn = lmnZ - 0.5;
-      const zf = lmxZ + 0.5;
-      const depthRange = zf - zn;
-      p[0] = 1/hlw; p[4] = 0;    p[8]  = 0;          p[12] = 0;
-      p[1] = 0;     p[5] = 1/hlh; p[9]  = 0;          p[13] = 0;
-      p[2] = 0;     p[6] = 0;     p[10] = 1/depthRange; p[14] = -zn/depthRange;
-      p[3] = 0;     p[7] = 0;     p[11] = 0;          p[15] = 1;
-      const svp = new Float32Array(16);
-      for (let col = 0; col < 4; col++) {
-        for (let row = 0; row < 4; row++) {
-          svp[col * 4 + row] = p[row] * v[col * 4] + p[4 + row] * v[col * 4 + 1]
-                             + p[8 + row] * v[col * 4 + 2] + p[12 + row] * v[col * 4 + 3];
-        }
-      }
-      return svp;
-    };
-
-    // Compute and upload shadow VP for both lights
-    const ld = this.pipeline.lightDir;
-    this.device.queue.writeBuffer(this.pipeline.shadowVPBuf, 0, computeShadowVP(ld[0], ld[1], ld[2]));
-    const ld2 = this.pipeline.lightDir2;
-    this.device.queue.writeBuffer(this.pipeline.shadowVPBuf2, 0, computeShadowVP(ld2[0], ld2[1], ld2[2]));
+    // Store model bounds and compute shadow VP for both lights
+    this.pipeline.setModelBounds(cx, cy, cz, maxDim, maxDim, maxDim);
+    this.pipeline.writeShadowVP(this.pipeline.lightDir[0], this.pipeline.lightDir[1], this.pipeline.lightDir[2], this.pipeline.shadowVPBuf);
+    this.pipeline.writeShadowVP(this.pipeline.lightDir2[0], this.pipeline.lightDir2[1], this.pipeline.lightDir2[2], this.pipeline.shadowVPBuf2);
 
     this.triggerGPUTiming();
     this._startLoop();
@@ -348,6 +288,9 @@ export class WebGPURenderer implements Renderer {
     const encoder = this.device.createCommandEncoder();
 
     // Shadow map render pass (always, regardless of SSAO)
+    // Recompute shadow VPs each frame so changes to lightDir take effect
+    this.pipeline.writeShadowVP(this.pipeline.lightDir[0], this.pipeline.lightDir[1], this.pipeline.lightDir[2], this.pipeline.shadowVPBuf);
+    this.pipeline.writeShadowVP(this.pipeline.lightDir2[0], this.pipeline.lightDir2[1], this.pipeline.lightDir2[2], this.pipeline.shadowVPBuf2);
     this.pipeline.renderShadowMap(encoder);
     this.pipeline.renderShadowMap2(encoder);
 

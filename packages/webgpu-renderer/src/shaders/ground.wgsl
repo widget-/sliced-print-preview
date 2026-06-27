@@ -19,6 +19,16 @@ struct Camera {
   viewMat: mat4x4<f32>,
 };
 
+struct Material {
+  roughness: f32,
+  metalness: f32,
+  envIntensity: f32,
+  specularStrength: f32,
+  ambientStrength: f32,
+  baseColorTint: vec3<f32>,
+  useRoleColors: f32,
+};
+
 struct VSIn {
   @location(0) position: vec3<f32>,
 };
@@ -29,6 +39,8 @@ struct VSOut {
 };
 
 @group(0) @binding(0) var<uniform> camera: Camera;
+@group(0) @binding(1) var<uniform> material: Material;
+@group(0) @binding(2) var<uniform> lightDir: vec4<f32>;  // xyz=normalized, w=intensity
 
 @vertex
 fn vs_ground(in: VSIn) -> VSOut {
@@ -71,6 +83,7 @@ fn fs_ground_shadow() {}
 @group(3) @binding(0) var shadowTex2: texture_depth_2d;
 @group(3) @binding(1) var shadowSampler2: sampler_comparison;
 @group(3) @binding(2) var<uniform> shadowVP2: mat4x4<f32>;
+@group(3) @binding(3) var<uniform> lightDir2: vec4<f32>;  // xyz=normalized, w=intensity
 @group(3) @binding(4) var<uniform> shadowParams2: vec4<f32>; // x=softness
 
 // ── Shadow helpers (PCF — rotated Vogel disk + receiver-plane bias) ──
@@ -101,29 +114,16 @@ fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x
   let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
   let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
 
-  let inFrustum: bool = all(shadowUV == clamp(shadowUV, vec2<f32>(0.0), vec2<f32>(1.0)));
-  // No Z bounds check for the ground — the ground plane projects outside the
-  // tight shadow frustum's Z range, but the UV clamp + depth comparison still
-  // work correctly for the portion that intersects the frustum.
-
-  let dz_duv: vec2<f32> = computeReceiverPlaneDepthBias(shadowNDC);
-
-  var vis: f32 = 1.0;
-  if (inFrustum) {
-    let texelSize: f32 = 1.0 / 1024.0;
-    let radius: f32 = texelSize * softness;
-    let phi: f32 = interleavedGradientNoise(clipPos.xy) * 6.283185307;
-    var sum: f32 = 0.0;
-    for (var i: u32 = 0u; i < 12u; i++) {
-      let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * radius;
-      let uv: vec2<f32> = clamp(shadowUV + offset, vec2<f32>(0.0), vec2<f32>(1.0));
-      let perSampleBias: f32 = dot(dz_duv, offset);
-      let refZ: f32 = clamp(shadowNDC.z + perSampleBias, 0.0, 1.0);
-      sum += textureSampleCompareLevel(tex, smp, uv, refZ);
-    }
-    vis = sum / 12.0;
+  let texelSize: f32 = 1.0 / 1024.0;
+  let radius: f32 = texelSize * softness;
+  let phi: f32 = interleavedGradientNoise(clipPos.xy) * 6.283185307;
+  var sum: f32 = 0.0;
+  for (var i: u32 = 0u; i < 12u; i++) {
+    let offset: vec2<f32> = vogelDiskSample(i, 12u, phi) * radius;
+    let uv: vec2<f32> = clamp(shadowUV + offset, vec2<f32>(0.0), vec2<f32>(1.0));
+    sum += textureSampleCompareLevel(tex, smp, uv, shadowNDC.z);
   }
-  return vis;
+  return sum / 12.0;
 }
 
 struct FragOut {
@@ -140,10 +140,16 @@ fn fs_ground(in: VSOut) -> FragOut {
   let shadowVis1: f32 = computeGroundShadow(shadowTex, shadowSampler, shadowVP, shadowParams.x, in.worldPos, in.clipPos);
   let shadowVis2: f32 = computeGroundShadow(shadowTex2, shadowSampler2, shadowVP2, shadowParams2.x, in.worldPos, in.clipPos);
 
-  // Combined shadow visibility with ambient fill (both lights)
-  let ambientFill: f32 = 0.15;
-  let shadowCombined: f32 = min(shadowVis1, shadowVis2);
-  let lit: f32 = max(ambientFill, shadowCombined);
+  // Combined shadow visibility with ambient fill (from material)
+  let ambientFill: f32 = max(material.ambientStrength, 0.05);
+
+  // Separate ambient from direct: shadow reduces only the direct term
+  let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
+  let L1: vec3<f32> = normalize(lightDir.xyz);
+  let L2: vec3<f32> = normalize(lightDir2.xyz);
+  let direct1: f32 = max(dot(upDir, L1), 0.0) * lightDir.w;
+  let direct2: f32 = max(dot(upDir, L2), 0.0) * lightDir2.w;
+  let lit: f32 = ambientFill + shadowVis1 * direct1 + shadowVis2 * direct2;
 
   // Write a normal facing +Z (upward) so SSAO at the ground/model boundary is consistent
   let worldN: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
