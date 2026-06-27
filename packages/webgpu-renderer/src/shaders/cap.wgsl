@@ -59,7 +59,9 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   );
 
   let worldPos: vec3<f32> = pos + rot * local;
-  let worldNormal: vec3<f32> = rot * vec3<f32>(flipEnd * in.normal.x, in.normal.y, flipEnd * in.normal.z);
+  // Radial normal from center toward vertex — always points outward
+  let radialDir: vec3<f32> = normalize(local);
+  let worldNormal: vec3<f32> = normalize(rot * radialDir);
 
   var out: VertexOutput;
   out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);

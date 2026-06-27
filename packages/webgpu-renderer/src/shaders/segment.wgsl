@@ -92,7 +92,13 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   );
 
   let worldPos: vec3<f32> = segPos + rot * local;
-  let worldNormal: vec3<f32> = rot * in.normal;
+  // Radial normal from segment center toward vertex — always points outward.
+  // At the flat top/bottom, blend toward the profile normal so the surface
+  // stays visually flat (the radial normal at the edges slants outward).
+  let radialDir: vec3<f32> = normalize(vec3<f32>(local.x, local.y, 0.0));
+  let flatBlend: f32 = abs(in.normal.y); // 1 at flat top/bottom, 0 at sides
+  let blendedNormal: vec3<f32> = normalize(mix(radialDir, in.normal, flatBlend));
+  let worldNormal: vec3<f32> = normalize(rot * blendedNormal);
 
   var out: VertexOutput;
   out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);

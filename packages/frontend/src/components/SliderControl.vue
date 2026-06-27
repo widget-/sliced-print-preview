@@ -73,7 +73,7 @@ const displayValue = computed(() => {
   height: 26px;
   border-radius: 13px;
   background: var(--slider-bg-empty, var(--app-border));
-  border: 1px solid var(--slider-fill, #1f5388);
+  border: 1px solid var(--slider-fill, #3399ff);
   overflow: hidden;
   z-index: 1;
 }
@@ -81,7 +81,7 @@ const displayValue = computed(() => {
 .slider-fill {
   height: 100%;
   border-radius: 13px;
-  background: var(--slider-fill, #3399ff);
+  background: var(--slider-fill, #1f5388);
   transition: width 0.08s ease;
   z-index: 2;
 }
