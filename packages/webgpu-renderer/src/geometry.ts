@@ -9,58 +9,158 @@ export interface BodyGeometry {
 }
 
 /**
- * Generate a rounded-rectangle extrusion body matching the WebGL2 geometry.
+ * Generate a flattened-capsule extrusion body.
  *
- * Cross-section profile is a rounded rectangle (wider in X). The profile is
- * extruded along Z from -0.5 to 0.5, with `nBody` interior rings between
- * the start and end rings. The vertex shader maps `position.z + 0.5` to
- * the parametric position `t` along the segment.
+ * Cross-section profile: flat top and bottom with elliptical sides
+ * that transition from the flat at ~40° and bulge outward (ellipse-like).
+ * The shape looks like a pill / capsule that's been flattened.
+ *
+ * Parameters:
+ *   hScale — controls the overall height (and indirectly the bulge angle)
+ *   edgeSegments — number of vertices along each quadrant of the curve
+ *   nBody — number of interior rings along the extrusion
+ *   bulgeAngleDeg — angle from horizontal at the flat-to-curve transition
+ *   bulgeRatio — how far the side bulges out (fraction of half-width)
  */
 export function generateBodyGeometry(
   hScale = 0.35,
   edgeSegments = 5,
   nBody = 3,
+  bulgeAngleDeg = 40,
+  bulgeRatio = 0.5,
 ): BodyGeometry {
-  const R = hScale / 2;       // corner radius
-  const W = 0.5;              // half-width
-  const cxL = -(W - R);
-  const cxR =  W - R;
+  const halfHeight = hScale / 2;
+  const flatHalfW = 0.325;       // half-width of the flat top/bottom (matches old R profile)
+  const maxHalfW = flatHalfW * (1 + bulgeRatio); // max half-width at waist
 
-  // 2D cross-section perimeter (rounded rectangle, clockwise)
-  const segs = edgeSegments;
-  const ringLen = segs * 2 + 2;
-  const profX = new Float32Array(ringLen);
-  const profY = new Float32Array(ringLen);
-  const normX = new Float32Array(ringLen);
-  const normY = new Float32Array(ringLen);
+  const bulgeRad = bulgeAngleDeg * Math.PI / 180;
+
+  // Generate right-half profile points: from top-center to bottom-center
+  // Top flat (center → edge): y = halfHeight, x from 0 to flatHalfW
+  // Top-right curve: Bezier from (flatHalfW, halfHeight) to (maxHalfW, 0)
+  // Bottom-right curve: Bezier from (maxHalfW, 0) to (flatHalfW, -halfHeight)
+  // Bottom flat: (flatHalfW → 0, -halfHeight)
+
+  const segs = edgeSegments; // vertices per quadrant
+  // Total ring = top flat (1) + top-right curve (segs) + bottom-right curve (segs) + bottom flat (1) = 2*segs + 2
+  // Wait, we need to go around the whole perimeter:
+  // top flat right (from center to edge) + top-right curve + bottom-right curve + bottom flat right + bottom flat left + bottom-left curve + top-left curve + top flat left
+  // = 1 + segs + segs + 1 + 1 + segs + segs + 1 = 4*segs + 4 = 4*(segs+1)  
+  // Actually simpler: ring = flat top (W, H) → right curve → flat bottom (W, -H) → left side back
+
+  // Approach: generate the perimeter clockwise starting at top-left corner of flat
+  // Top flat: left-to-right
+  // Right curve: top-right to bottom-right (quarter Bezier × 2)
+  // Bottom flat: right-to-left
+  // Left curve: bottom-left to top-left (quarter Bezier × 2)
+
+  // Evaluate cubic Bezier at parameter t ∈ [0,1]
+  function bezier(p0: number[], p1: number[], p2: number[], p3: number[], t: number): [number, number] {
+    const mt = 1 - t;
+    const mt2 = mt * mt, mt3 = mt2 * mt;
+    const t2 = t * t, t3 = t2 * t;
+    return [
+      mt3 * p0[0] + 3 * mt2 * t * p1[0] + 3 * mt * t2 * p2[0] + t3 * p3[0],
+      mt3 * p0[1] + 3 * mt2 * t * p1[1] + 3 * mt * t2 * p2[1] + t3 * p3[1],
+    ];
+  }
+
+  // Derivative of cubic Bezier at parameter t
+  function bezierDeriv(p0: number[], p1: number[], p2: number[], p3: number[], t: number): [number, number] {
+    const mt = 1 - t;
+    return [
+      3 * mt * mt * (p1[0] - p0[0]) + 6 * mt * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]),
+      3 * mt * mt * (p1[1] - p0[1]) + 6 * mt * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]),
+    ];
+  }
+
+  // Bezier control points for the top-right quadrant (flat edge → widest point)
+  // Tangent at start: 40° from horizontal (dx>0, dy<0 = going down-right)
+  // Tangent at end: vertical (pointing down)
+  const ctrlDist = (maxHalfW - flatHalfW) * 0.8;
+  const cosA = Math.cos(bulgeRad), sinA = Math.sin(bulgeRad);
+  const p0: [number, number] = [flatHalfW, halfHeight];
+  const p1: [number, number] = [flatHalfW + ctrlDist * cosA, halfHeight - ctrlDist * sinA];
+  const p2: [number, number] = [maxHalfW, halfHeight * 0.5];
+  const p3: [number, number] = [maxHalfW, 0];
+
+  // Bottom-right quadrant: (maxW, 0) → (W, -H)
+  const bp0: [number, number] = [maxHalfW, 0];
+  const bp1: [number, number] = [maxHalfW, -halfHeight * 0.5];
+  const bp2: [number, number] = [flatHalfW + ctrlDist * cosA, -halfHeight + ctrlDist * sinA];
+  const bp3: [number, number] = [flatHalfW, -halfHeight];
+
+  // Compute ring vertex count
+  const maxRingLen = 4 * segs + 4;
+  const profX = new Float32Array(maxRingLen);
+  const profY = new Float32Array(maxRingLen);
+  const normX = new Float32Array(maxRingLen);
+  const normY = new Float32Array(maxRingLen);
 
   let pi = 0;
-  // Top-right rounded corner (left-to-right top edge)
-  for (let i = 0; i < segs; i++) {
-    const t = -Math.PI / 2 + (i / (segs - 1)) * Math.PI;
-    profX[pi] = cxR + R * Math.cos(t);
-    profY[pi] = R * Math.sin(t);
-    normX[pi] = Math.cos(t);
-    normY[pi] = Math.sin(t);
+
+  // Helper: add profile point with computed outward normal
+  function addPt(x: number, y: number, dx: number, dy: number) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const nx = len > 1e-8 ? -dy / len : 0;
+    const ny = len > 1e-8 ? dx / len : (y >= 0 ? 1 : -1);
+    profX[pi] = x; profY[pi] = y;
+    normX[pi] = nx; normY[pi] = ny;
     pi++;
   }
-  // Top-left flat point
-  profX[pi] = cxL; profY[pi] = R;
-  normX[pi] = 0; normY[pi] = 1;
-  pi++;
-  // Left rounded corner (top-to-bottom)
-  for (let i = 0; i < segs; i++) {
-    const t = Math.PI / 2 + (i / (segs - 1)) * Math.PI;
-    profX[pi] = cxL + R * Math.cos(t);
-    profY[pi] = R * Math.sin(t);
-    normX[pi] = Math.cos(t);
-    normY[pi] = Math.sin(t);
-    pi++;
+
+  // Generate perimeter clockwise, starting at top-right corner:
+  // right flat edge → top-right curve → bottom-right curve → bottom edge
+  // → bottom-left → bottom-left curve → top-left curve → back to top edge
+
+  // Top-right edge (included as start and end of ring closure via modulo)
+  addPt(flatHalfW, halfHeight, 1, 0);
+
+  // Top-right curve: (W, H) → (maxW, 0)
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier(p0, p1, p2, p3, t);
+    const [dx, dy] = bezierDeriv(p0, p1, p2, p3, t);
+    addPt(x, y, dx, dy);
   }
-  // Bottom-right flat point (closing the loop)
-  profX[pi] = cxR; profY[pi] = -R;
-  normX[pi] = 0; normY[pi] = -1;
-  pi++;
+
+  // Bottom-right curve: (maxW, 0) → (W, -H)
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier(bp0, bp1, bp2, bp3, t);
+    const [dx, dy] = bezierDeriv(bp0, bp1, bp2, bp3, t);
+    addPt(x, y, dx, dy);
+  }
+
+  // Bottom-right edge
+  addPt(flatHalfW, -halfHeight, -1, 0);
+
+  // Bottom-left edge
+  addPt(-flatHalfW, -halfHeight, -1, 0);
+
+  // Bottom-left curve: (-W, -H) → (-maxW, 0)
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier([-bp0[0], bp0[1]], [-bp1[0], bp1[1]], [-bp2[0], bp2[1]], [-bp3[0], bp3[1]], t);
+    const [dx, dy] = bezierDeriv([-bp0[0], bp0[1]], [-bp1[0], bp1[1]], [-bp2[0], bp2[1]], [-bp3[0], bp3[1]], t);
+    addPt(x, y, dx, dy);
+  }
+
+  // Top-left curve: (-maxW, 0) → (-W, H)
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier([-p0[0], p0[1]], [-p1[0], p1[1]], [-p2[0], p2[1]], [-p3[0], p3[1]], t);
+    const [dx, dy] = bezierDeriv([-p0[0], p0[1]], [-p1[0], p1[1]], [-p2[0], p2[1]], [-p3[0], p3[1]], t);
+    addPt(x, y, dx, dy);
+  }
+
+  // Top-left edge (closes the loop via modulo indexing)
+  addPt(-flatHalfW, halfHeight, 1, 0);
+
+  const ringLen = pi;
+
+  // Close the loop — last point should connect to first (top-center)
+  // But top-center is at index 0, so we're already looped
 
   const totalRings = nBody + 2;
   const verts = totalRings * ringLen;
@@ -115,43 +215,95 @@ export function generateCapGeometry(
   hScale = 0.35,
   edgeSegments = 5,
   domeSegments = 4,
+  bulgeAngleDeg = 40,
+  bulgeRatio = 0.5,
 ): CapGeometry {
-  const R = hScale / 2;
-  const W = 0.5;
-  const cxL = -(W - R);
-  const cxR =  W - R;
+  const halfHeight = hScale / 2;
+  const flatHalfW = 0.35;
+  const maxHalfW = flatHalfW * (1 + bulgeRatio);
+  const bulgeRad = bulgeAngleDeg * Math.PI / 180;
   const segs = edgeSegments;
 
-  // Build 2D profile (same as body cross-section)
-  const ringLen = segs * 2 + 2;
-  const profX = new Float32Array(ringLen);
-  const profY = new Float32Array(ringLen);
-  const radNrmX = new Float32Array(ringLen);
-  const radNrmY = new Float32Array(ringLen);
+  // Same Bezier-based profile as body geometry
+  function bezier(p0: number[], p1: number[], p2: number[], p3: number[], t: number): [number, number] {
+    const mt = 1 - t, mt2 = mt * mt, mt3 = mt2 * mt;
+    const t2 = t * t, t3 = t2 * t;
+    return [
+      mt3 * p0[0] + 3 * mt2 * t * p1[0] + 3 * mt * t2 * p2[0] + t3 * p3[0],
+      mt3 * p0[1] + 3 * mt2 * t * p1[1] + 3 * mt * t2 * p2[1] + t3 * p3[1],
+    ];
+  }
+
+  function bezierDeriv(p0: number[], p1: number[], p2: number[], p3: number[], t: number): [number, number] {
+    const mt = 1 - t;
+    return [
+      3 * mt * mt * (p1[0] - p0[0]) + 6 * mt * t * (p2[0] - p1[0]) + 3 * t * t * (p3[0] - p2[0]),
+      3 * mt * mt * (p1[1] - p0[1]) + 6 * mt * t * (p2[1] - p1[1]) + 3 * t * t * (p3[1] - p2[1]),
+    ];
+  }
+
+  const ctrlDist = (maxHalfW - flatHalfW) * 0.8;
+  const cosA = Math.cos(bulgeRad), sinA = Math.sin(bulgeRad);
+  const p0: [number, number] = [flatHalfW, halfHeight];
+  const p1: [number, number] = [flatHalfW + ctrlDist * cosA, halfHeight - ctrlDist * sinA];
+  const p2: [number, number] = [maxHalfW, halfHeight * 0.5];
+  const p3: [number, number] = [maxHalfW, 0];
+  const bp0: [number, number] = [maxHalfW, 0];
+  const bp1: [number, number] = [maxHalfW, -halfHeight * 0.5];
+  const bp2: [number, number] = [flatHalfW + ctrlDist * cosA, -halfHeight + ctrlDist * sinA];
+  const bp3: [number, number] = [flatHalfW, -halfHeight];
+
+  // Same clockwise perimeter as body geometry (simplified — no center vertices)
+  const capRingLen = 4 * segs + 4; // top edge + 4 curves + bottom edges + closing
+  const profX = new Float32Array(capRingLen);
+  const profY = new Float32Array(capRingLen);
+  const radNrmX = new Float32Array(capRingLen);
+  const radNrmY = new Float32Array(capRingLen);
 
   let pi = 0;
-  for (let i = 0; i < segs; i++) {
-    const t = -Math.PI / 2 + (i / (segs - 1)) * Math.PI;
-    profX[pi] = cxR + R * Math.cos(t);
-    profY[pi] = R * Math.sin(t);
-    radNrmX[pi] = Math.cos(t);
-    radNrmY[pi] = Math.sin(t);
-    pi++;
+  function addCPt(x: number, y: number, dx: number, dy: number) {
+    const len = Math.sqrt(dx * dx + dy * dy);
+    const nx = len > 1e-8 ? -dy / len : 0;
+    const ny = len > 1e-8 ? dx / len : (y >= 0 ? 1 : -1);
+    profX[pi] = x; profY[pi] = y; radNrmX[pi] = nx; radNrmY[pi] = ny; pi++;
   }
-  profX[pi] = cxL; profY[pi] = R; radNrmX[pi] = 0; radNrmY[pi] = 1; pi++;
-  for (let i = 0; i < segs; i++) {
-    const t = Math.PI / 2 + (i / (segs - 1)) * Math.PI;
-    profX[pi] = cxL + R * Math.cos(t);
-    profY[pi] = R * Math.sin(t);
-    radNrmX[pi] = Math.cos(t);
-    radNrmY[pi] = Math.sin(t);
-    pi++;
+
+  addCPt(flatHalfW, halfHeight, 1, 0);
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier(p0, p1, p2, p3, t);
+    const [dx, dy] = bezierDeriv(p0, p1, p2, p3, t);
+    addCPt(x, y, dx, dy);
   }
-  profX[pi] = cxR; profY[pi] = -R; radNrmX[pi] = 0; radNrmY[pi] = -1; pi++;
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier(bp0, bp1, bp2, bp3, t);
+    const [dx, dy] = bezierDeriv(bp0, bp1, bp2, bp3, t);
+    addCPt(x, y, dx, dy);
+  }
+  addCPt(flatHalfW, -halfHeight, -1, 0);
+  addCPt(-flatHalfW, -halfHeight, -1, 0);
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier([-bp0[0], bp0[1]], [-bp1[0], bp1[1]], [-bp2[0], bp2[1]], [-bp3[0], bp3[1]], t);
+    const [dx, dy] = bezierDeriv([-bp0[0], bp0[1]], [-bp1[0], bp1[1]], [-bp2[0], bp2[1]], [-bp3[0], bp3[1]], t);
+    addCPt(x, y, dx, dy);
+  }
+  for (let i = 1; i <= segs; i++) {
+    const t = i / segs;
+    const [x, y] = bezier([-p0[0], p0[1]], [-p1[0], p1[1]], [-p2[0], p2[1]], [-p3[0], p3[1]], t);
+    const [dx, dy] = bezierDeriv([-p0[0], p0[1]], [-p1[0], p1[1]], [-p2[0], p2[1]], [-p3[0], p3[1]], t);
+    addCPt(x, y, dx, dy);
+  }
+  // Top-left edge (closes the ring via modulo)
+  addCPt(-flatHalfW, halfHeight, 1, 0);
+
+  const capRL = pi;
+  console.assert(capRL === capRingLen, `cap ringLen mismatch: ${capRL} vs ${capRingLen}`);
 
   // Generate dome: rings at z = 0..1 with scale = sqrt(1 - z*z)
   const domeRings = domeSegments;
-  const verts = domeRings * ringLen + 1; // +1 for apex
+  const verts = domeRings * capRL + 1; // +1 for apex
   const interleaved = new Float32Array(verts * 6);
   const indices: number[] = [];
 
@@ -165,35 +317,35 @@ export function generateCapGeometry(
     const z = j / domeRings;
     const scale = Math.sqrt(Math.max(0, 1 - z * z));
     const w = 1.0 - z; // blend weight: 1 at rim, 0 at apex
-    for (let i = 0; i < ringLen; i++) {
+    for (let i = 0; i < capRL; i++) {
       const nx = radNrmX[i] * w;
       const ny = radNrmY[i] * w;
       const nz2 = z;
       const nl = Math.sqrt(nx * nx + ny * ny + nz2 * nz2);
-      setVert(j * ringLen + i, profX[i] * scale, profY[i] * scale, z,
+      setVert(j * capRL + i, profX[i] * scale, profY[i] * scale, z,
         nx / nl, ny / nl, nz2 / nl);
     }
   }
 
   // Apex
-  const apexIdx = domeRings * ringLen;
+  const apexIdx = domeRings * capRL;
   setVert(apexIdx, 0, 0, 1, 0, 0, 1);
 
   // Connect adjacent rings
   for (let j = 0; j < domeRings - 1; j++) {
-    const r0 = j * ringLen;
-    const r1 = (j + 1) * ringLen;
-    for (let i = 0; i < ringLen; i++) {
-      const nxt = (i + 1) % ringLen;
+    const r0 = j * capRL;
+    const r1 = (j + 1) * capRL;
+    for (let i = 0; i < capRL; i++) {
+      const nxt = (i + 1) % capRL;
       indices.push(r0 + i, r1 + i, r1 + nxt);
       indices.push(r0 + i, r1 + nxt, r0 + nxt);
     }
   }
 
   // Connect last ring to apex
-  const lastRing = (domeRings - 1) * ringLen;
-  for (let i = 0; i < ringLen; i++) {
-    const nxt = (i + 1) % ringLen;
+  const lastRing = (domeRings - 1) * capRL;
+  for (let i = 0; i < capRL; i++) {
+    const nxt = (i + 1) % capRL;
     indices.push(lastRing + i, lastRing + nxt, apexIdx);
   }
 

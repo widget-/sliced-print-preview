@@ -194,7 +194,7 @@ export class SlicedPipeline {
     const bodyGeos = generateAllBodyGeometries();
     const capGeos = generateAllCapGeometries();
     const mkVB = (g: { interleaved: Float32Array }) => { const b = d.createBuffer({ size: g.interleaved.byteLength, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true }); new Float32Array(b.getMappedRange()).set(g.interleaved); b.unmap(); return b; };
-    const mkIB = (g: { indices: Uint16Array }) => { const b = d.createBuffer({ size: g.indices.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true }); new Uint16Array(b.getMappedRange()).set(g.indices); b.unmap(); return b; };
+    const mkIB = (g: { indices: Uint16Array }) => { const s = g.indices.byteLength; const a = Math.ceil(s / 4) * 4; const b = d.createBuffer({ size: a, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST, mappedAtCreation: true }); new Uint16Array(b.getMappedRange()).set(g.indices); b.unmap(); return b; };
     this.bodyVB = bodyGeos.map(mkVB); this.bodyIB = bodyGeos.map(mkIB); this.bodyIC = bodyGeos.map(g => g.indices.length);
     this.capVB = capGeos.map(mkVB); this.capIB = capGeos.map(mkIB); this.capIC = capGeos.map(g => g.indices.length);
     [this.vertexBuffer, this.indexBuffer, this.indexCount] = [this.bodyVB[0], this.bodyIB[0], this.bodyIC[0]];

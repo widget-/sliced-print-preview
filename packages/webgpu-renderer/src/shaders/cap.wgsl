@@ -35,11 +35,11 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   } else {
     tangent = vec3<f32>(0.0, 0.0, 1.0);
   }
-  let capDir: vec3<f32> = select(-tangent, tangent, isEnd > 0.5);
 
-  // Build orthonormal basis
+  // Build orthonormal basis — always from segment tangent (not capDir) — always from segment tangent (not capDir)
+  // so the profile XY orientation is consistent for both start and end caps.
   let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var rightDir: vec3<f32> = -normalize(cross(upDir, capDir));
+  var rightDir: vec3<f32> = -normalize(cross(upDir, tangent));
   if (length(rightDir) < 0.001) {
     rightDir = vec3<f32>(1.0, 0.0, 0.0);
   }
@@ -48,14 +48,18 @@ fn vs_cap(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
 
   let hScale: f32 = 1.25;
   let areaCorrection: f32 = 1.1;
+  // Flip X and Z for end cap: X mirrors the profile so the bulge faces the same
+  // side of the extrusion; Z flips so the dome bulges outward (along segment dir
+  // for end cap, opposite segment dir for start cap).
+  let flipEnd: f32 = select(-1.0, 1.0, isEnd > 0.5);
   let local: vec3<f32> = vec3<f32>(
-    in.position.x * capsWidth * areaCorrection,
+    flipEnd * in.position.x * capsWidth * areaCorrection,
     in.position.y * capsWidth * hScale,
-    in.position.z * capsWidth * 0.5
+    flipEnd * in.position.z * capsWidth * 0.5
   );
 
   let worldPos: vec3<f32> = pos + rot * local;
-  let worldNormal: vec3<f32> = rot * in.normal;
+  let worldNormal: vec3<f32> = rot * vec3<f32>(flipEnd * in.normal.x, in.normal.y, flipEnd * in.normal.z);
 
   var out: VertexOutput;
   out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);
