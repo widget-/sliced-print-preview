@@ -31,7 +31,6 @@ export function buildSegmentBuffers(
     mappedAtCreation: true,
   });
   const view = new DataView(segmentBuf.getMappedRange());
-
   for (let i = 0; i < count; i++) {
     const base = i * SEGMENT_DATA_STRIDE;
     const sx = g[i * 8],      sy = g[i * 8 + 1], sz = g[i * 8 + 2];

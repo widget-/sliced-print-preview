@@ -1,19 +1,13 @@
 // ── Body vertex shader ──
+// Transforms the 2D cross‑section (XY) into world space (Z‑up).
 //
-// Transforms 2D cross-section vertices (XY) into 3D world space (Z-up).
-// The cross-section lives in XY (X = width, Y = height), extruded along Z.
-// The vertex shader maps:
-//   geometry Y  → world Z  (up direction, via upDir = (0,0,1) on line 65)
-//   geometry X  → world right direction (perpendicular to segment tangent)
-//   geometry Z  → world forward direction (along segment tangent)
-//   geometry normal (0,1,0) → world (0,0,1) = top face (facing +Z = sky)
-//   geometry normal (0,-1,0) → world (0,0,-1) = bottom face (facing -Z = ground)
-//
-// See types.wgsl for struct definitions and full binding layout.
+// geometry Y  → world Z  (upDir = (0,0,1))
+// geometry X  → world right
+// geometry Z  → world forward (along segment tangent)
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
-  // Cull if this segment isn't assigned to this LOD level
+  // Cull segments not assigned to this LOD
   if (segmentLod[ii] != lodLevel) {
     var out: VertexOutput;
     out.clipPos = vec4<f32>(0.0, 0.0, 0.0, 0.0);
@@ -28,45 +22,45 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let isArc: bool = (packed & 1u) != 0u;
   let width: f32 = data.startPos.w;
 
+  // Evaluate segment position and tangent
   var segPos: vec3<f32>;
   var endTangent: vec3<f32>;
 
   if (isArc) {
-    // Rational quadratic Bézier: P0 = start, P1 = end (control), P2 = next.start
-    let p0: vec3<f32> = data.startPos.xyz;
-    let p1: vec3<f32> = data.endPos.xyz;
-    let p2: vec3<f32> = segments[ii + 1u].startPos.xyz;
-    let w: f32 = data.endPos.w;
-    let mt: f32 = 1.0 - t;
-    let mt2: f32 = mt * mt;
-    let t2: f32 = t * t;
-    let denom: f32 = mt2 + 2.0 * t * mt * w + t2;
+    // Rational quadratic Bézier
+    let p0 = data.startPos.xyz;
+    let p1 = data.endPos.xyz;
+    let p2 = segments[ii + 1u].startPos.xyz;
+    let w  = data.endPos.w;
+    let mt = 1.0 - t;
+    let mt2 = mt * mt;
+    let t2 = t * t;
+    let denom = mt2 + 2.0 * t * mt * w + t2;
     segPos = (mt2 * p0 + 2.0 * t * mt * w * p1 + t2 * p2) / denom;
 
-    // Finite-difference tangent for endTangent
-    let eps: f32 = 0.01;
-    let te: f32 = min(t + eps, 1.0); let me: f32 = 1.0 - te;
-    let me2: f32 = me * me; let te2: f32 = te * te;
-    let de: f32 = me2 + 2.0 * te * me * w + te2;
-    let pe: vec3<f32> = (me2 * p0 + 2.0 * te * me * w * p1 + te2 * p2) / de;
-    let ts: f32 = max(t - eps, 0.0); let ms: f32 = 1.0 - ts;
-    let ms2: f32 = ms * ms; let ts2: f32 = ts * ts;
-    let ds: f32 = ms2 + 2.0 * ts * ms * w + ts2;
-    let ps: vec3<f32> = (ms2 * p0 + 2.0 * ts * ms * w * p1 + ts2 * p2) / ds;
-    let dDir: vec3<f32> = pe - ps;
-    let dLen: f32 = length(dDir);
-    endTangent = select(normalize(dDir), vec3<f32>(0.0, 0.0, 1.0), dLen < 0.0001);
+    // Finite‑difference tangent
+    let eps = 0.01;
+    let te = min(t + eps, 1.0); let me = 1.0 - te;
+    let me2 = me * me; let te2 = te * te;
+    let de = me2 + 2.0 * te * me * w + te2;
+    let pe = (me2 * p0 + 2.0 * te * me * w * p1 + te2 * p2) / de;
+    let ts = max(t - eps, 0.0); let ms = 1.0 - ts;
+    let ms2 = ms * ms; let ts2 = ts * ts;
+    let ds = ms2 + 2.0 * ts * ms * w + ts2;
+    let ps = (ms2 * p0 + 2.0 * ts * ms * w * p1 + ts2 * p2) / ds;
+    let dDir = pe - ps;
+    endTangent = select(normalize(dDir), vec3<f32>(0.0, 0.0, 1.0), length(dDir) < 0.0001);
   } else {
     segPos = mix(data.startPos.xyz, data.endPos.xyz, t);
-    let dir: vec3<f32> = data.endPos.xyz - data.startPos.xyz;
-    let segLen: f32 = length(dir);
+    let dir = data.endPos.xyz - data.startPos.xyz;
+    let segLen = length(dir);
     endTangent = select(dir / segLen, vec3<f32>(0.0, 0.0, 1.0), segLen < 0.001);
   }
 
-  // Interpolate between chain-start tangent and current endTangent
-  let chainStartTangent: vec3<f32> = data.chain.xyz;
+  // Interpolate between chain‑start tangent and current endTangent
+  let chainStartTangent = data.chain.xyz;
   var tangent: vec3<f32>;
-  let cstLen: f32 = length(chainStartTangent);
+  let cstLen = length(chainStartTangent);
   if (isArc) {
     tangent = endTangent;
   } else if (cstLen > 0.001) {
@@ -75,30 +69,30 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
     tangent = endTangent;
   }
 
-  let upDir: vec3<f32> = vec3<f32>(0.0, 0.0, 1.0);
-  var rightDir: vec3<f32> = -normalize(cross(upDir, tangent));
+  // Build orthonormal basis: upDir = (0,0,1), right & forward from tangent
+  let upDir = vec3<f32>(0.0, 0.0, 1.0);
+  var rightDir = -normalize(cross(upDir, tangent));
   if (length(rightDir) < 0.001) {
     rightDir = vec3<f32>(1.0, 0.0, 0.0);
   }
-  let fwdDir: vec3<f32> = -normalize(cross(rightDir, upDir));
+  let fwdDir = -normalize(cross(rightDir, upDir));
   let rot = mat3x3<f32>(rightDir, upDir, fwdDir);
 
-  let hScale: f32 = 1.25;
-  let areaCorrection: f32 = 1.1;
-  let local: vec3<f32> = vec3<f32>(
+  let hScale = 1.25;
+  let areaCorrection = 1.1;
+  // Local position: map geometry XY to right/up, Z is unused (zero)
+  let local = vec3<f32>(
     in.position.x * width * areaCorrection,
     in.position.y * width * hScale,
-    0.0
+    0.0,
   );
 
-  let worldPos: vec3<f32> = segPos + rot * local;
-  // Radial normal from segment center toward vertex — always points outward.
-  // At the flat top/bottom, blend toward the profile normal so the surface
-  // stays visually flat (the radial normal at the edges slants outward).
-  let radialDir: vec3<f32> = normalize(vec3<f32>(local.x, local.y, 0.0));
-  let flatBlend: f32 = abs(in.normal.y); // 1 at flat top/bottom, 0 at sides
-  let blendedNormal: vec3<f32> = normalize(mix(radialDir, in.normal, flatBlend));
-  let worldNormal: vec3<f32> = normalize(rot * blendedNormal);
+  let worldPos = segPos + rot * local;
+
+  // Use the pre‑computed 2D outward normal directly.
+  // No blending – it already points correctly everywhere (flat top, curved sides, bottom).
+  let packedFlags = u32(data.misc.x);
+  let worldNormal = normalize(rot * (in.normal));
 
   var out: VertexOutput;
   out.clipPos = camera.viewProj * vec4<f32>(worldPos, 1.0);
