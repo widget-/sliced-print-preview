@@ -49,7 +49,7 @@ const props = withDefaults(defineProps<{
   ssaoIntensity?: number;
   ssaoRadius?: number;
   /** Debug preview mode for WebGPU renderer. */
-  debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'velocity' | 'composite-taa' | 'blur-temp' | 'brdf-lut' | 'prefilter-up' | 'prefilter-fwd' | 'prefilter-down' | 'source-up' | 'source-fwd' | 'source-down';
+  debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'shadow2' | 'velocity' | 'composite-taa' | 'blur-temp' | 'brdf-lut' | 'prefilter-up' | 'prefilter-fwd' | 'prefilter-down' | 'source-up' | 'source-fwd' | 'source-down';
   envMapUrl?: string;
 }>(), {
   rendererType: 'webgl2',

@@ -172,7 +172,7 @@ export class SlicedPipeline {
     useRoleColors: 1,
   };
   lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
-  lightDir2: [number, number, number, number] = [-0.3, -0.2, 0.9, 0.4];
+  lightDir2: [number, number, number, number] = [-0.5, -0.3, 0.6, 0.4];
   lightDir2Buf!: GPUBuffer;
   /** Shadow PCF kernel radius multiplier (1=1 texel, 2=2 texels, etc). */
   shadowSoftness = 2.0;
@@ -580,7 +580,7 @@ export class SlicedPipeline {
     });
 
     // ── Ground plane ──
-    const GROUND_SIZE = 200;
+    const GROUND_SIZE = 250;
     const GROUND_Z = -3;
     const groundVerts = new Float32Array([
       -GROUND_SIZE, -GROUND_SIZE, GROUND_Z,
@@ -1206,7 +1206,7 @@ export class SlicedPipeline {
   /** Move the ground plane to a new Z position. Rebuilds the vertex buffer. */
   setGroundZ(z: number) {
     this._groundZ = z;
-    const GROUND_SIZE = 200;
+    const GROUND_SIZE = 250;
     const verts = new Float32Array([
       -GROUND_SIZE, -GROUND_SIZE, z,
        GROUND_SIZE, -GROUND_SIZE, z,
@@ -1284,6 +1284,10 @@ export class SlicedPipeline {
         break;
       case 'shadow':
         view = this.shadowTex.createView();
+        depthMode = true;
+        break;
+      case 'shadow2':
+        view = this.shadowTex2.createView();
         depthMode = true;
         break;
       default:

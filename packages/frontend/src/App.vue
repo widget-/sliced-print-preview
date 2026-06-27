@@ -70,6 +70,7 @@
           <option value="source-fwd">Source +Y (north)</option>
           <option value="source-down">Source -Z (ground)</option>
           <option value="shadow">Shadow Map</option>
+          <option value="shadow2">Shadow Map 2</option>
           <option value="velocity">Velocity</option>
           <option value="composite-taa">Composite (TAA input)</option>
         </select>

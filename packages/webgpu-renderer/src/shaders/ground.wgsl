@@ -101,8 +101,10 @@ fn computeGroundShadow(tex: texture_depth_2d, smp: sampler_comparison, vp: mat4x
   let shadowNDC: vec3<f32> = shadowClip.xyz / shadowClip.w;
   let shadowUV: vec2<f32> = shadowNDC.xy * vec2<f32>(0.5, -0.5) + 0.5;
 
-  let inFrustum: bool = all(shadowUV == clamp(shadowUV, vec2<f32>(0.0), vec2<f32>(1.0)))
-                     && shadowNDC.z >= 0.0 && shadowNDC.z <= 1.0;
+  let inFrustum: bool = all(shadowUV == clamp(shadowUV, vec2<f32>(0.0), vec2<f32>(1.0)));
+  // No Z bounds check for the ground — the ground plane projects outside the
+  // tight shadow frustum's Z range, but the UV clamp + depth comparison still
+  // work correctly for the portion that intersects the frustum.
 
   let dz_duv: vec2<f32> = computeReceiverPlaneDepthBias(shadowNDC);
 

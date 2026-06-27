@@ -19,7 +19,7 @@ export class WebGPURenderer implements Renderer {
   stats = { fps: 0, triangles: 0 };
   ssaoEnabled = true;
   /** Debug preview: show an internal texture instead of the normal composite. */
-  debugPreview: 'none' | 'depth' | 'occlusion' | 'color' | 'shadow' = 'none';
+  debugPreview: 'none' | 'depth' | 'occlusion' | 'color' | 'shadow' | 'shadow2' = 'none';
   private _mounted = false;
   private _statsFrames = 0;
   private _statsTime = 0;
