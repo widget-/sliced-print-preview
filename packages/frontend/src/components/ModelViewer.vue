@@ -164,17 +164,21 @@ let modelCenter = new Vector3(0, 0, 0);
 let modelExtent = 1;
 
 // ── Custom TAA state ──
-// Two scene RTs for double-buffered frame accumulation
-let taaRTs: RenderTargetTexture[] = [];
-let taaIndex = 0; // which RT is current (0 or 1)
-let taaFrame = 0;
-let taaProgram: WebGLProgram | null = null; // fullscreen tri shader
+// Swapchain-copy approach: scene renders normally, we copy the swapchain
+// for frame accumulation. Depth comes from a SEPARATE render pass using
+// the shadow vertex shader (no texture reads → no feedback loop).
+let taaReadTex: WebGLTexture | null = null;
+let taaHistTex: WebGLTexture | null = null;
+let taaDepthTex: WebGLTexture | null = null; // raw GL depth texture
+let taaDepthColorTex: WebGLTexture | null = null; // throwaway color for FB
+let taaDepthFB: WebGLFramebuffer | null = null; // raw GL framebuffer
+let taaProgram: WebGLProgram | null = null;
 let taaBlendLoc: WebGLUniformLocation | null = null;
 let taaPrevVPLoc: WebGLUniformLocation | null = null;
 let taaInvVPLoc: WebGLUniformLocation | null = null;
 let taaScreenSizeLoc: WebGLUniformLocation | null = null;
-let prevViewProj = Matrix.Identity(); // for velocity reprojection
-let depthRenderer: any = null; // Babylon's DepthRenderer (for future velocity)
+let prevViewProj = Matrix.Identity();
+let taaFrame = 0;
 
 async function loadEnvMap(url?: string) {
   const hdrUrl = url || props.envMapUrl;
@@ -334,22 +338,35 @@ async function loadSegbinModel(url: string) {
     groundMesh.position.z = minZ - 5;
   }
 
-  // ── Set up double-buffered TAA ──
-  if (taaRTs.length === 0) {
+  // ── Set up raw WebGL textures for swapchain-copy TAA ──
+  if (!taaReadTex && engine) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
-
-    // Two offscreen render targets for ping-pong accumulation
-    for (let i = 0; i < 2; i++) {
-      const rt = new RenderTargetTexture(`taa_${i}`, { width: w, height: h }, scene, false, true, Engine.TEXTURETYPE_HALF_FLOAT);
-      rt.createDepthStencilTexture(0); // depth texture for correct rendering
-      rt.wrapU = Texture.CLAMP_ADDRESSMODE;
-      rt.wrapV = Texture.CLAMP_ADDRESSMODE;
-      taaRTs.push(rt);
-    }
-
-    // Compile fullscreen-triangle TAA shader for the blend pass
     const gl = (engine as any)._gl as WebGL2RenderingContext;
+
+    const makeTex = (internalFormat: number) => {
+      const t = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.texStorage2D(gl.TEXTURE_2D, 1, internalFormat, w, h);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      return t;
+    };
+    taaReadTex = makeTex(gl.RGBA8);
+    taaHistTex = makeTex(gl.RGBA8);
+    taaDepthColorTex = makeTex(gl.RGBA8); // throwaway
+    taaDepthTex = makeTex(gl.DEPTH_COMPONENT24);
+
+    // Framebuffer for depth pass (color + depth)
+    taaDepthFB = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, taaDepthFB);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, taaDepthColorTex, 0);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, taaDepthTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    // Compile fullscreen-triangle TAA shader
     const vs = gl.createShader(gl.VERTEX_SHADER)!;
     gl.shaderSource(vs, TAA_FS_VERTEX);
     gl.compileShader(vs);
@@ -369,15 +386,12 @@ async function loadSegbinModel(url: string) {
     taaScreenSizeLoc = gl.getUniformLocation(prog, 'uScreenSize');
     prevViewProj = Matrix.Identity();
 
-    log(`TAA: ${w}x${h} double-buffered RTs ready`);
+    log(`TAA: ${w}x${h} raw textures ready`);
   }
 
-  // Update render lists for both RTs
-  const renderList: import('@babylonjs/core').Mesh[] = [...segbinMeshes];
-  if (groundMesh) renderList.push(groundMesh);
-  for (const rt of taaRTs) {
-    rt.renderList = renderList;
-  }
+  // Update render list for the scene RT (used for TAA depth pass)
+  const list: import('@babylonjs/core').Mesh[] = [...segbinMeshes];
+  if (groundMesh) list.push(groundMesh);
 
   const totalMs = performance.now() - t0;
   log(`Segbin loaded in ${totalMs.toFixed(0)}ms`);
@@ -427,13 +441,13 @@ function renderShadowMap(buildResult: BuildResult, rt: RenderTargetTexture, ligh
   const origMat = mesh.material;
   mesh.material = buildResult.shadowMat;
   buildResult.shadowMat.setMatrix('uLightVP', lightVP);
-  // Ensure shadow RT uses the mesh
   if (!rt.renderList || rt.renderList.indexOf(mesh) < 0) {
     rt.renderList = [mesh];
   }
   rt.render();
   mesh.material = origMat;
-  // Force-unbind shadow framebuffer to avoid feedback when scene reads shadow textures
+  // Reset Babylon's internal framebuffer tracking + GL state to prevent feedback
+  (engine as any)._currentRenderTarget = null;
   const gl = (engine as any)._gl as WebGL2RenderingContext;
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
@@ -576,93 +590,88 @@ function renderFrame() {
     }
   }
 
-  // ── TAA: double-buffered frame accumulation ──
-  if (taaRTs.length >= 2 && taaProgram) {
+  // ── TAA: swapchain-copy + separate depth pass ──
+  // Depth is rendered separately using shadowMat (no texture reads = no feedback).
+  // Color comes from swapchain copy. TAA blends both.
+  if (taaReadTex && taaHistTex && taaDepthTex && taaProgram && buildResult) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
     const gl = (engine as any)._gl as WebGL2RenderingContext;
 
-    // 1. Apply Halton jitter to camera projection
+    // 1. Apply Halton jitter
     const jx = halton2(taaFrame);
     const jy = halton3(taaFrame);
     const origProj = camera.getProjectionMatrix().clone();
-    const proj = camera.getProjectionMatrix();
-    proj.m[8] += (jx * 2) / w;
-    proj.m[9] += (jy * 2) / h;
-
-    // 2. Render scene to current RT
-    const curIdx = taaIndex;
-    const curRT = taaRTs[curIdx];
-    curRT.render();
-    // Force-unbind offscreen RT framebuffer before TAA pass reads its textures
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-
-    // 3. Restore camera projection
-    camera.getProjectionMatrix().copyFrom(origProj);
-
-    // 4. TAA blend: current RT + history RT → swapchain
-    const histIdx = 1 - curIdx;
-    const histRT = taaRTs[histIdx];
-
-    // Helper to get WebGL texture from Babylon InternalTexture
-    const getGLTex = (rt: RenderTargetTexture): WebGLTexture | null => {
-      const it = rt.renderTarget?.texture;
-      return it ? (it as any)._hardwareTexture?.underlyingResource ?? null : null;
-    };
-    const getGLDepthTex = (rt: RenderTargetTexture): WebGLTexture | null => {
-      const it = rt.renderTarget?.depthStencilTexture;
-      return it ? (it as any)._hardwareTexture?.underlyingResource ?? null : null;
-    };
-
-    const curTex = getGLTex(curRT);
-    const histTex = getGLTex(histRT);
-    const depthTex = getGLDepthTex(curRT);
-
-    // Compute view-projection matrices for velocity reprojection
-    const viewMat = camera.getViewMatrix();
-    // Jittered projection is still on the camera (not yet restored), so
-    // viewProj uses the jittered projection for correct NDC→world mapping
     const jitteredProj = camera.getProjectionMatrix();
+    jitteredProj.m[8] += (jx * 2) / w;
+    jitteredProj.m[9] += (jy * 2) / h;
+
+    // View-projection for depth pass and velocity
+    const viewMat = camera.getViewMatrix();
     const viewProj = jitteredProj.clone().multiply(viewMat);
     const invViewProj = Matrix.Invert(viewProj);
 
-    if (curTex && histTex && depthTex) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-      gl.viewport(0, 0, w, h);
-      gl.disable(gl.DEPTH_TEST);
-      gl.useProgram(taaProgram);
+    // 2. Render depth to raw framebuffer using shadow vertex shader.
+    //    The shadowMat only reads segmentTexture (no shadow maps) so no feedback.
+    const shadowMesh = buildResult.shadowMesh;
+    const origShadowMat = shadowMesh.material;
+    shadowMesh.material = buildResult.shadowMat;
+    buildResult.shadowMat.setMatrix('uLightVP', viewProj);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, taaDepthFB!);
+    gl.viewport(0, 0, w, h);
+    gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
+    // Render the shadow mesh using Babylon's rendering
+    shadowMesh.render();
+    shadowMesh.material = origShadowMat;
+    // Reset Babylon's FB tracking to prevent feedback during main render
+    (engine as any)._currentRenderTarget = null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, curTex);
-      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uCurrentTex'), 0);
+    // 3. Render scene to swapchain (with jitter)
+    scene.render();
 
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, histTex);
-      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uHistoryTex'), 1);
+    // 4. Restore camera projection
+    camera.getProjectionMatrix().copyFrom(origProj);
 
-      gl.activeTexture(gl.TEXTURE2);
-      gl.bindTexture(gl.TEXTURE_2D, depthTex);
-      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uDepthTex'), 2);
+    // 5. Copy swapchain → readTex
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, taaReadTex);
+    gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
 
-      gl.uniform1f(taaBlendLoc, 0.15);
-      gl.uniform2f(taaScreenSizeLoc, w, h);
+    // 6. TAA blend: readTex + histTex + depthTex → swapchain
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(taaProgram);
 
-      // Upload mat4 uniforms (column-major Float32Array)
-      gl.uniformMatrix4fv(taaInvVPLoc, false, invViewProj.asArray());
-      gl.uniformMatrix4fv(taaPrevVPLoc, false, prevViewProj.asArray());
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, taaReadTex);
+    gl.uniform1i(gl.getUniformLocation(taaProgram, 'uCurrentTex'), 0);
 
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, taaHistTex);
+    gl.uniform1i(gl.getUniformLocation(taaProgram, 'uHistoryTex'), 1);
 
-      gl.enable(gl.DEPTH_TEST);
-    }
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, taaDepthTex);
+    gl.uniform1i(gl.getUniformLocation(taaProgram, 'uDepthTex'), 2);
 
-    // 5. Save current VP as prev for next frame's reprojection
+    gl.uniform1f(taaBlendLoc, 0.15);
+    gl.uniform2f(taaScreenSizeLoc, w, h);
+    gl.uniformMatrix4fv(taaInvVPLoc, false, invViewProj.asArray());
+    gl.uniformMatrix4fv(taaPrevVPLoc, false, prevViewProj.asArray());
+
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.enable(gl.DEPTH_TEST);
+
+    // 7. Copy output → histTex for next frame
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, taaHistTex);
+    gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+
     prevViewProj = viewProj;
-
-    // 6. Swap ping-pong
-    taaIndex = histIdx;
     taaFrame++;
-  } else {
+  } else if (buildResult) {
     scene.render();
   }
 
@@ -762,8 +771,8 @@ onMounted(() => {
 
     // Post-processing — depth renderer for future velocity-buffer TAA
     // (current TAA uses double-buffered offscreen RTs in renderFrame)
-    const dr = scene.enableDepthRenderer(camera, true, false, true);
-    depthRenderer = dr;
+    // Depth renderer is NOT used — Babylon's built-in depth pass doesn't work
+    // with our custom vertex shaders. We compute our own depth via offscreen RT.
 
 
 
@@ -903,13 +912,14 @@ onBeforeUnmount(() => {
   shadowRT2?.dispose();
   shadowRT = null;
   shadowRT2 = null;
-  for (const rt of taaRTs) rt.dispose();
-  taaRTs = [];
-  if (taaProgram) {
-    const gl = (engine as any)._gl as WebGL2RenderingContext;
-    gl.deleteProgram(taaProgram);
-    taaProgram = null;
-  }
+  // Clean up raw GL textures + FB
+  const gl2 = (engine as any)._gl as WebGL2RenderingContext;
+  if (taaReadTex) { gl2.deleteTexture(taaReadTex); taaReadTex = null; }
+  if (taaHistTex) { gl2.deleteTexture(taaHistTex); taaHistTex = null; }
+  if (taaDepthTex) { gl2.deleteTexture(taaDepthTex); taaDepthTex = null; }
+  if (taaDepthColorTex) { gl2.deleteTexture(taaDepthColorTex); taaDepthColorTex = null; }
+  if (taaDepthFB) { gl2.deleteFramebuffer(taaDepthFB); taaDepthFB = null; }
+  if (taaProgram) { gl2.deleteProgram(taaProgram); taaProgram = null; }
   for (const m of segbinMeshes) {
     m.dispose();
   }
