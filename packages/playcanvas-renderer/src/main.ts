@@ -1,16 +1,19 @@
 import type { MaterialProps, Renderer, ScreenshotHooks } from '@sliced/shared';
 import { loadSegbin, type SegbinData } from '@sliced/shared';
-import { generateBodyGeometry } from './geometry';
+import { generateBodyGeometry, generateCapGeometry } from './geometry';
 import * as pc from 'playcanvas';
 
 // ── Segment data per-instance layout ──
 // ATTR12: startPos.xyz + width          (vec4)
-// ATTR13: endPos.xyz + flags            (vec4)  — flags.x: isArc
-// ATTR14: color.rgb + _unused           (vec4)
-const SEG_FLOATS = 12;
+// ATTR13: endPos.xyz + arcWeight        (vec4) — arcWeight = conic weight (0 for linear)
+// ATTR14: color.rgb + flags             (vec4) — flags.x = isArc (>0.5)
+// ATTR15: nextStartPos.xyz + _unused    (vec4) — next segment's start (for Bezier)
+const SEG_FLOATS = 16;
+
+// Cap instance uses same layout but ATTR14.w = isEnd (>0.5 for end cap)
+const CAP_FLOATS = 16;
 
 function packSegmentData(data: SegbinData): Float32Array {
-  // Count visible segments (exclude SkirtBrim=10, Other=13)
   const n = data.count;
   let visCount = 0;
   for (let i = 0; i < n; i++) {
@@ -18,32 +21,91 @@ function packSegmentData(data: SegbinData): Float32Array {
     if (r !== 10 && r !== 13) visCount++;
   }
 
+  // Build index map: original index → packed index (or -1 if hidden)
+  const idxMap = new Int32Array(n).fill(-1);
+  {
+    let vi = 0;
+    for (let i = 0; i < n; i++) {
+      if (data.roles[i] !== 10 && data.roles[i] !== 13) idxMap[i] = vi++;
+    }
+  }
+
   const out = new Float32Array(visCount * SEG_FLOATS);
   const g = data.geoms;
-  let vi = 0;
   for (let i = 0; i < n; i++) {
+    const vi = idxMap[i];
+    if (vi < 0) continue;
     const r = data.roles[i];
-    if (r === 10 || r === 13) continue; // skip SkirtBrim, Other
-
     const off = vi * SEG_FLOATS;
-    // ATTR12: startPos.xyz + width  (rotate Z‑up → Y‑up: (x,y,z) → (x,z,-y))
+
+    // ATTR12: startPos.xyz + width  (rotate Z‑up → Y‑up)
     out[off + 0] = g[i * 8 + 0];      // x → x
     out[off + 1] = g[i * 8 + 2];      // z → y
     out[off + 2] = -g[i * 8 + 1];     // -y → z
     out[off + 3] = g[i * 8 + 6];      // width
-    // ATTR13: endPos.xyz + flags
+
+    // ATTR13: endPos.xyz + arcWeight
     out[off + 4] = g[i * 8 + 3];      // x → x
     out[off + 5] = g[i * 8 + 5];      // z → y
     out[off + 6] = -g[i * 8 + 4];     // -y → z
-    const isArc = (data.segType[i] & 1) !== 0 ? 1.0 : 0.0;
-    out[off + 7] = isArc;
-    // ATTR14: color.rgb + unused
+
+    // Arc weight: unpack from g[i*8+7] (packed layerZ + conic weight)
+    const isArc = (data.segType[i] & 1) !== 0;
+    let arcWeight = 0.0;
+    if (isArc) {
+      const packed = g[i * 8 + 7];
+      const lz = Math.round(packed * 100) / 100;
+      arcWeight = (packed - lz) * 10000;
+    }
+    out[off + 7] = arcWeight;
+
+    // ATTR14: color.rgb + flags (isArc bit)
     const c = roleColorVec3(r);
     out[off + 8] = c[0];
     out[off + 9] = c[1];
     out[off + 10] = c[2];
-    out[off + 11] = 0.0;
-    vi++;
+    out[off + 11] = isArc ? 1.0 : 0.0;
+
+    // ATTR15: next segment's startPos (for Bezier evaluation)
+    // Find next visible segment
+    let nextIdx = i + 1;
+    while (nextIdx < n && idxMap[nextIdx] < 0) nextIdx++;
+    if (nextIdx < n) {
+      out[off + 12] = g[nextIdx * 8 + 0];      // x
+      out[off + 13] = g[nextIdx * 8 + 2];      // z → y
+      out[off + 14] = -g[nextIdx * 8 + 1];     // -y → z
+    } else {
+      // Fallback: use endPos
+      out[off + 12] = g[i * 8 + 3];
+      out[off + 13] = g[i * 8 + 5];
+      out[off + 14] = -g[i * 8 + 4];
+    }
+    out[off + 15] = 0.0;
+  }
+  return out;
+}
+
+function packCapData(data: SegbinData, visSegments: Float32Array): Float32Array {
+  // 2 caps per segment (start + end), each with full segment data + isEnd flag
+  const segCount = visSegments.length / SEG_FLOATS;
+  const capCount = segCount * 2;
+  const out = new Float32Array(capCount * CAP_FLOATS);
+
+  for (let ci = 0; ci < capCount; ci++) {
+    const segIdx = Math.floor(ci / 2);
+    const isEnd = (ci % 2 === 1) ? 1.0 : 0.0;
+    const srcOff = segIdx * SEG_FLOATS;
+    const dstOff = ci * CAP_FLOATS;
+
+    // Copy full segment data (ATTR12-13, ATTR15)
+    for (let j = 0; j < 8; j++) out[dstOff + j] = visSegments[srcOff + j];     // ATTR12 + ATTR13
+    for (let j = 12; j < 16; j++) out[dstOff + j] = visSegments[srcOff + j];    // ATTR15
+
+    // ATTR14: color.rgb + isEnd
+    out[dstOff + 8] = visSegments[srcOff + 8];  // r
+    out[dstOff + 9] = visSegments[srcOff + 9];  // g
+    out[dstOff + 10] = visSegments[srcOff + 10]; // b
+    out[dstOff + 11] = isEnd;
   }
   return out;
 }
@@ -66,6 +128,7 @@ function createInstancingFormat(device: pc.GraphicsDevice): pc.VertexFormat {
     { semantic: pc.SEMANTIC_ATTR12, components: 4, type: pc.TYPE_FLOAT32 },
     { semantic: pc.SEMANTIC_ATTR13, components: 4, type: pc.TYPE_FLOAT32 },
     { semantic: pc.SEMANTIC_ATTR14, components: 4, type: pc.TYPE_FLOAT32 },
+    { semantic: pc.SEMANTIC_ATTR15, components: 4, type: pc.TYPE_FLOAT32 },
   ]);
 }
 
@@ -78,14 +141,11 @@ attribute vec3 vertex_normal;
 attribute vec4 instance_line1;
 attribute vec4 instance_line2;
 attribute vec4 instance_line3;
+attribute vec4 instance_line4;
 #endif
 
 uniform mat4 matrix_viewProjection;
 uniform mat4 matrix_view;
-uniform vec3 matrix_viewPosition;
-uniform vec3 lightDir;
-uniform float lightIntensity;
-uniform float ambientStrength;
 
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
@@ -94,28 +154,28 @@ varying vec4 vClipPos;
 
 const float hScale = 1.25;
 const float areaCorrection = 1.1;
-const vec3 upDirConst = vec3(0.0, 1.0, 0.0); // PlayCanvas Y‑up
+const vec3 upDirConst = vec3(0.0, 1.0, 0.0);
 
-mat4 getModelMatrix() {
-  // Not used — we compute world pos directly
-  return mat4(1.0);
-}
+mat4 getModelMatrix() { return mat4(1.0); }
 
 void main() {
 #ifdef INSTANCING
   vec3 startPos = instance_line1.xyz;
   float width = instance_line1.w;
   vec3 endPos = instance_line2.xyz;
-  float flags = instance_line2.w;
-  bool isArc = flags > 0.5;
+  float arcWeight = instance_line2.w;
   vec3 segColor = instance_line3.rgb;
+  float isArcF = instance_line3.a;
+  bool isArc = isArcF > 0.5;
+  vec3 nextStartPos = instance_line4.xyz;
 #else
-  // Fallback: draw a single extruded segment at origin for debugging
   vec3 startPos = vec3(-0.5, 0.0, 0.0);
   float width = 0.4;
   vec3 endPos = vec3(0.5, 0.0, 0.0);
-  bool isArc = false;
+  float arcWeight = 0.0;
   vec3 segColor = vec3(1.0, 0.5, 0.2);
+  bool isArc = false;
+  vec3 nextStartPos = vec3(0.5, 0.0, 0.0);
 #endif
 
   float t = vertex_position.z + 0.5;
@@ -123,18 +183,34 @@ void main() {
   vec3 segPos;
   vec3 endTangent;
 
-  if (isArc) {
-    // Rational quadratic Bezier approximation using next segment
-    // For now: linear fallback (full Bezier needs neighbor data)
-    segPos = mix(startPos, endPos, t);
-    vec3 dir = endPos - startPos;
-    float len = length(dir);
-    endTangent = len > 0.001 ? dir / len : vec3(0.0, 0.0, 1.0);
+  if (isArc && arcWeight > 0.001) {
+    // Rational quadratic Bezier
+    vec3 p0 = startPos;
+    vec3 p1 = endPos;
+    vec3 p2 = nextStartPos;
+    float w = arcWeight;
+    float mt = 1.0 - t;
+    float mt2 = mt * mt;
+    float t2 = t * t;
+    float denom = mt2 + 2.0 * t * mt * w + t2;
+    segPos = (mt2 * p0 + 2.0 * t * mt * w * p1 + t2 * p2) / denom;
+
+    // Finite-difference tangent
+    float te = min(t + 0.01, 1.0); float me = 1.0 - te;
+    float me2 = me * me; float te2 = te * te;
+    float de = me2 + 2.0 * te * me * w + te2;
+    vec3 pe = (me2 * p0 + 2.0 * te * me * w * p1 + te2 * p2) / de;
+    float ts = max(t - 0.01, 0.0); float ms = 1.0 - ts;
+    float ms2 = ms * ms; float ts2 = ts * ts;
+    float ds = ms2 + 2.0 * ts * ms * w + ts2;
+    vec3 ps = (ms2 * p0 + 2.0 * ts * ms * w * p1 + ts2 * p2) / ds;
+    vec3 dDir = pe - ps;
+    endTangent = length(dDir) < 0.0001 ? vec3(0.0, 1.0, 0.0) : normalize(dDir);
   } else {
     segPos = mix(startPos, endPos, t);
     vec3 dir = endPos - startPos;
     float len = length(dir);
-    endTangent = len > 0.001 ? dir / len : vec3(0.0, 0.0, 1.0);
+    endTangent = len > 0.001 ? dir / len : vec3(0.0, 1.0, 0.0);
   }
 
   vec3 tangent = endTangent;
@@ -189,6 +265,108 @@ void main() {
 
   vec3 result = ambient + diffuse + specular;
   gl_FragColor = vec4(result, 1.0);
+}
+`;
+
+// ── GLSL cap vertex shader ──
+const CAP_VERT_GLSL = `
+attribute vec3 vertex_position;
+attribute vec3 vertex_normal;
+
+#ifdef INSTANCING
+attribute vec4 instance_line1;
+attribute vec4 instance_line2;
+attribute vec4 instance_line3;
+attribute vec4 instance_line4;
+#endif
+
+uniform mat4 matrix_viewProjection;
+
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec3 vColor;
+
+const float hScale = 1.25;
+const float areaCorrection = 1.1;
+const vec3 upDirConst = vec3(0.0, 1.0, 0.0);
+
+mat4 getModelMatrix() { return mat4(1.0); }
+
+void main() {
+#ifdef INSTANCING
+  vec3 startPos = instance_line1.xyz;
+  float width = instance_line1.w;
+  vec3 endPos = instance_line2.xyz;
+  float arcWeight = instance_line2.w;
+  vec3 segColor = instance_line3.rgb;
+  float isEnd = instance_line3.a;
+  vec3 nextStartPos = instance_line4.xyz;
+#else
+  vec3 startPos = vec3(0.0, 0.0, 0.0);
+  float width = 0.4;
+  vec3 endPos = vec3(1.0, 0.0, 0.0);
+  float arcWeight = 0.0;
+  vec3 segColor = vec3(1.0, 0.5, 0.2);
+  float isEnd = 1.0;
+  vec3 nextStartPos = vec3(1.0, 0.0, 0.0);
+#endif
+
+  // Position at start or end of segment
+  vec3 pos = isEnd > 0.5 ? endPos : startPos;
+
+  // Tangent direction outward from endpoint
+  vec3 dir = endPos - startPos;
+  float len = length(dir);
+  vec3 tangent = len > 0.001 ? dir / len : vec3(0.0, 1.0, 0.0);
+
+  vec3 upDir = upDirConst;
+  vec3 rightDir = -normalize(cross(upDir, tangent));
+  if (length(rightDir) < 0.001) rightDir = vec3(1.0, 0.0, 0.0);
+  vec3 fwdDir = -normalize(cross(rightDir, upDir));
+  mat3 rot = mat3(rightDir, upDir, fwdDir);
+
+  // Flip X and Z for start cap so bulge faces outward
+  float flipEnd = isEnd > 0.5 ? 1.0 : -1.0;
+
+  vec3 local = vec3(
+    flipEnd * vertex_position.x * width * areaCorrection,
+            vertex_position.y * width * hScale,
+    flipEnd * vertex_position.z * width * 0.5
+  );
+
+  vec3 worldPos = pos + rot * local;
+
+  // Flip local normal Z for start cap
+  vec3 localNormal = vec3(
+    flipEnd * vertex_normal.x,
+    vertex_normal.y,
+    flipEnd * vertex_normal.z
+  );
+  vec3 worldNormal = normalize(rot * localNormal);
+
+  gl_Position = matrix_viewProjection * vec4(worldPos, 1.0);
+  vWorldPos = worldPos;
+  vWorldNormal = worldNormal;
+  vColor = segColor;
+}
+`;
+
+const CAP_FRAG_GLSL = `
+varying vec3 vWorldPos;
+varying vec3 vWorldNormal;
+varying vec3 vColor;
+
+uniform vec3 lightDir;
+uniform float lightIntensity;
+uniform float ambientStrength;
+
+void main() {
+  vec3 N = normalize(vWorldNormal);
+  vec3 L = normalize(lightDir);
+  float NdotL = max(dot(N, L), 0.0);
+  vec3 ambient = vColor * ambientStrength;
+  vec3 diffuse = vColor * NdotL * lightIntensity;
+  gl_FragColor = vec4(ambient + diffuse, 1.0);
 }
 `;
 
@@ -376,6 +554,7 @@ void main() {
         instance_line1: pc.SEMANTIC_ATTR12,
         instance_line2: pc.SEMANTIC_ATTR13,
         instance_line3: pc.SEMANTIC_ATTR14,
+        instance_line4: pc.SEMANTIC_ATTR15,
       },
     };
     this._material = new pc.ShaderMaterial(shaderDesc);
@@ -383,8 +562,7 @@ void main() {
     // Disable instancing temporarily for debug shader
     // (instancing attributes not declared in debug shader)
 
-    // Disable culling for debugging
-    this._material.cull = pc.CULLFACE_NONE;
+    // Back-face culling (default, matching WebGPU)
 
     if (!DEBUG_SHADER) {
       // Enable instancing define for ShaderMaterial
@@ -403,9 +581,10 @@ void main() {
 
     // Set up instancing (skip for debug shader)
     let visCount = 0;
+    let segmentArray: Float32Array | null = null;
     if (!DEBUG_SHADER) {
       const instFormat = createInstancingFormat(device);
-      const segmentArray = packSegmentData(data);
+      segmentArray = packSegmentData(data);
       visCount = segmentArray.length / SEG_FLOATS;
       const instVb = new pc.VertexBuffer(device, instFormat, visCount, {
         data: segmentArray.buffer as ArrayBuffer,
@@ -430,6 +609,71 @@ void main() {
     segEntity.setLocalPosition(this._orbitTarget.x, this._orbitTarget.y, this._orbitTarget.z);
     this.app.root.addChild(segEntity);
     this._meshEntity = segEntity;
+
+    // ── Caps ──
+    if (!DEBUG_SHADER && segmentArray) {
+      const capGeo = generateCapGeometry(0.35, 0.35, 5, 4);
+      const capVertCount = capGeo.interleaved.length / 6;
+
+      // Create cap mesh
+      const capMesh = new pc.Mesh(device);
+      const capInterleaved = new Float32Array(capGeo.interleaved);
+      const capVb = new pc.VertexBuffer(device, interleavedFormat, capVertCount, {
+        data: capInterleaved.buffer as ArrayBuffer,
+      });
+      const capIb = new pc.IndexBuffer(device, pc.INDEXFORMAT_UINT16, capGeo.indices.length, pc.BUFFER_STATIC, capGeo.indices.buffer as ArrayBuffer);
+      capMesh.vertexBuffer = capVb;
+      capMesh.indexBuffer = [capIb];
+      capMesh.primitive = [{
+        type: pc.PRIMITIVE_TRIANGLES,
+        base: 0,
+        count: capGeo.indices.length,
+        indexed: true,
+      }];
+      capMesh.update();
+
+      // Cap shader material
+      const capShaderDesc = {
+        uniqueName: 'segment-cap',
+        vertexGLSL: CAP_VERT_GLSL,
+        fragmentGLSL: CAP_FRAG_GLSL,
+        attributes: {
+          vertex_position: pc.SEMANTIC_POSITION,
+          vertex_normal: pc.SEMANTIC_NORMAL,
+          instance_line1: pc.SEMANTIC_ATTR12,
+          instance_line2: pc.SEMANTIC_ATTR13,
+          instance_line3: pc.SEMANTIC_ATTR14,
+          instance_line4: pc.SEMANTIC_ATTR15,
+        },
+      };
+      const capMaterial = new pc.ShaderMaterial(capShaderDesc);
+      capMaterial.defines.set('INSTANCING', '');
+      capMaterial.cull = pc.CULLFACE_NONE; // caps need reverse winding per WebGPU
+      capMaterial.setParameter('lightDir', new Float32Array([1.0, 1.0, 2.0]));
+      capMaterial.setParameter('lightIntensity', 0.8);
+      capMaterial.setParameter('ambientStrength', 0.3);
+
+      // Cap instancing data
+      const capData = packCapData(data, segmentArray);
+      const capCount = capData.length / CAP_FLOATS;
+      const capInstVb = new pc.VertexBuffer(device, createInstancingFormat(device), capCount, {
+        data: capData.buffer as ArrayBuffer,
+      });
+
+      const capMi = new pc.MeshInstance(capMesh, capMaterial);
+      capMi.setInstancing(capInstVb);
+      capMi.instancingCount = capCount;
+
+      const capEntity = new pc.Entity('caps');
+      capEntity.addComponent('render', {
+        meshInstances: [capMi],
+      });
+      capEntity.setLocalPosition(this._orbitTarget.x, this._orbitTarget.y, this._orbitTarget.z);
+      this.app.root.addChild(capEntity);
+
+      console.log(`[PlayCanvas] Caps: ${capCount} instances, ${capGeo.indices.length} idx`);
+      this.stats.triangles += Math.round((capGeo.indices.length / 3) * capCount / 1000);
+    }
 
     const elapsed = performance.now() - t0;
     return Math.round(elapsed);
