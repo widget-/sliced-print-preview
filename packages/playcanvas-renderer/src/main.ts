@@ -529,6 +529,16 @@ export class PlayCanvasRenderer implements Renderer {
 
     app.scene.ambientLight = new pc.Color(0.3, 0.3, 0.35);
 
+    // ── CameraFrame (SSAO + TAA + tone mapping) ──
+    const cameraFrame = new pc.CameraFrame(app, this._cameraEntity.camera!);
+    cameraFrame.ssao.type = pc.SSAOTYPE_COMBINE;
+    cameraFrame.ssao.blurEnabled = true;
+    cameraFrame.taa.enabled = true;
+    cameraFrame.taa.jitter = 1.0;
+    // Keep default tone mapping (ACES) and bloom disabled
+
+    console.log('[PlayCanvas] CameraFrame enabled: SSAO + TAA');
+
     // ── Skybox placeholder ──
     app.scene.envAtlas = null;
 
