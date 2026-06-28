@@ -152,6 +152,8 @@ export class SlicedPipeline {
   debugPipe!: GPURenderPipeline;
   debugFloatPipe!: GPURenderPipeline;
   debugDepthPipe!: GPURenderPipeline;
+  debugColorBGL!: GPUBindGroupLayout;
+  debugColorPipe!: GPURenderPipeline;
   // Passthrough copy (SSAO-off path)
   copyPipe!: GPURenderPipeline;
 
@@ -496,6 +498,20 @@ export class SlicedPipeline {
       layout: debugDepthPL,
       vertex: { module: debugDepthMod, entryPoint: 'vs_fullscreen' },
       fragment: { module: debugDepthMod, entryPoint: 'fs_debug_depth', targets: [{ format: fmt, writeMask: 15 }] },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    // Color textures (normal, offscreen color, composite) — pass through RGB
+    this.debugColorBGL = d.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
+    });
+    const debugColorPL = d.createPipelineLayout({ bindGroupLayouts: [this.debugColorBGL] });
+    this.debugColorPipe = d.createRenderPipeline({
+      layout: debugColorPL,
+      vertex: { module: this.ssaoMod, entryPoint: 'vs_fullscreen' },
+      fragment: { module: this.ssaoMod, entryPoint: 'fs_copy_color', targets: [{ format: fmt, writeMask: 15 }] },
       primitive: { topology: 'triangle-list' },
     });
 
@@ -1270,6 +1286,7 @@ export class SlicedPipeline {
     let view: GPUTextureView | undefined;
     let depthMode = false;
     let floatMode = false;
+    let colorMode = false;
     switch (mode) {
       case 'depth':
         view = this.ssaoDepthTex.createView();
@@ -1319,9 +1336,11 @@ export class SlicedPipeline {
         break;
       case 'color':
         view = this.offscreenColorTex.createView();
+        colorMode = true;
         break;
       case 'normal':
         view = this.normalTex.createView();
+        colorMode = true;
         break;
       case 'velocity':
         view = this.velocityTex?.createView();
@@ -1330,6 +1349,7 @@ export class SlicedPipeline {
       case 'composite-taa':
         view = this.compositeTex?.createView();
         if (!view) return;
+        colorMode = true;
         break;
       case 'shadow':
         view = this.shadowTex.createView();
@@ -1343,10 +1363,10 @@ export class SlicedPipeline {
         return;
     }
     const bg = this.device.createBindGroup({
-      layout: floatMode ? this.debugFloatBGL : (depthMode ? this.debugDepthBGL : this.debugBGL),
+      layout: colorMode ? this.debugColorBGL : (floatMode ? this.debugFloatBGL : (depthMode ? this.debugDepthBGL : this.debugBGL)),
       entries: [{ binding: 0, resource: view! }],
     });
-    pass.setPipeline(floatMode ? this.debugFloatPipe : (depthMode ? this.debugDepthPipe : this.debugPipe));
+    pass.setPipeline(colorMode ? this.debugColorPipe : (floatMode ? this.debugFloatPipe : (depthMode ? this.debugDepthPipe : this.debugPipe)));
     pass.setBindGroup(0, bg);
     pass.draw(3);
   }

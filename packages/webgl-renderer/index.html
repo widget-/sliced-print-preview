@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WebGL2 Renderer — Sliced Print Preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #ccc; font: 14px/1.5 system-ui, sans-serif; }
+    #app { width: 100vw; height: 100vh; display: flex; flex-direction: column; }
+    #render-canvas { width: 100%; flex: 1; display: block; outline: none; touch-action: none; }
+    #fallback { display: none; padding: 2rem; text-align: center; color: #e74c3c; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <p id="fallback">WebGL 2.0 not available — this device doesn't support it.</p>
+    <canvas id="render-canvas"></canvas>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -3,7 +3,7 @@
 A real-time 3D print preview renderer that runs in the browser.
 
 Takes in a 3D model, runs it through OrcaSlicer, and renders the sliced GCode
-using WebGPU (primary) or WebGL2 (fallback for older devices).
+using WebGPU.
 
 An intermediate format `.segbin` is used to store the extrusion segments in a
 compact binary format for the frontend to load and render.
@@ -33,8 +33,7 @@ Server
 
 Frontend
 
-- WebGPU primary renderer (packages/webgpu-renderer/) with WebGL2/Babylon.js fallback (packages/frontend/)
-- Auto-detects WebGPU support at boot and selects the appropriate renderer
+- WebGPU renderer (packages/webgpu-renderer/) integrated via Vue 3 frontend (packages/frontend/)
 - Uses instanced rendering to render thousands of extrusion segments
 - 3-level level-of-detail (LOD) system to reduce rendering cost
 - Tuneable material properties (color, roughness, metallic, etc.)
@@ -56,7 +55,7 @@ cd packages/gcode-to-segbin
 cargo build --release
 ```
 
-### 2. Start the frontend (WebGL2 fallback)
+### 2. Start the frontend
 
 ```bash
 cd packages/frontend
@@ -64,21 +63,7 @@ bun i
 bun dev
 ```
 
-The frontend runs on `http://localhost:5173`. WebGPU is auto-detected; if
-your browser supports it, the WebGPU renderer will be used (once implemented).
-
-### WebGPU renderer (standalone, in development)
-
-```bash
-cd packages/webgpu-renderer
-bun i
-bun dev
-```
-
-This starts a standalone Vite dev server for the WebGPU renderer on
-`http://localhost:5173`. It loads an empty canvas that renders the
-WebGPU pipeline in isolation. Use this for rapid iteration on the
-WebGPU renderer without the Vue app wrapper.
+The frontend runs on `http://localhost:5173`.
 
 ### 3. Backend
 
@@ -135,16 +120,15 @@ packages/
 │       ├── types.ts    # Role, SegbinData, roleColor/roleLabel
 │       ├── segbin.ts   # parseSegbin() binary parser
 │       └── renderer.ts # Renderer interface (abstraction contract)
-├── frontend/           # Vue 3 + Babylon.js WebGL2 renderer (fallback)
+├── frontend/           # Vue 3 WebGPU renderer frontend
 │   ├── src/
-│   │   ├── renderer/   # GLSL shaders, geometry, segbin loader
 │   │   ├── components/ # ModelViewer, App
 │   │   └── __tests__/
 │   └── public/         # Static assets (env maps)
-├── webgpu-renderer/    # Raw WebGPU renderer (primary, in development)
+├── webgpu-renderer/    # Raw WebGPU renderer
 │   └── src/
 │       ├── main.ts     # Entry: adapter, device, swap chain
-│       ├── shaders/    # WGSL modules (Phase 1+)
+│       ├── shaders/    # WGSL modules
 │       └── ...         # pipeline.ts, camera.ts, etc.
 ├── backend/            # Express API for slicing pipeline and frontend proxy
 └── gcode-to-segbin/    # Rust CLI: GCode → .segbin
@@ -156,9 +140,9 @@ packages/
 
 ## Todo (Future wishlist)
 
+- Rewrite WebGL2 fallback renderer
 - Temporal reprojection for the existing TAA
 - Better LOD since large models can still end up with >20M triangles
-- A way to get Deepseek v4 to stop trying to give up and revert its changes all the time
 
 ## Licenses
 

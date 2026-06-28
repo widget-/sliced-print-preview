@@ -49,11 +49,6 @@
         <label class="checkbox-label">
           <input type="checkbox" v-model="ssaoEnabled" /> SSAO
         </label>
-        <label>Renderer</label>
-        <select v-model="rendererType" class="renderer-select">
-          <option value="webgl2">WebGL2</option>
-          <option value="webgpu" :disabled="!webgpuAvailable" :title="!webgpuAvailable && webgpuReason ? webgpuReason : ''">WebGPU{{ webgpuAvailable ? '' : ' (unavailable)' }}</option>
-        </select>
         <label>Debug Preview</label>
         <select v-model="debugPreview" class="renderer-select">
           <option value="none">None</option>
@@ -72,6 +67,7 @@
           <option value="shadow">Shadow Map</option>
           <option value="shadow2">Shadow Map 2</option>
           <option value="velocity">Velocity</option>
+          <option value="worldpos">World Position</option>
           <option value="composite-taa">Composite (TAA input)</option>
         </select>
       </div>
@@ -79,9 +75,7 @@
     <div class="resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
     <div class="viewer" :style="isMobile() ? { height: viewerPercent + '%' } : undefined">
       <ModelViewer
-        :key="rendererType"
         :segbinUrl="segbinUrl"
-        :rendererType="rendererType"
         :roughness="roughness"
         :metalness="metalness"
         :envIntensity="envIntensity"
@@ -142,19 +136,7 @@ const envMapFiles = [
   'wooden_studio_03_1k.hdr',
 ];
 
-// Feature-detect WebGPU
-let webgpuAvailable = false;
-let webgpuReason = '';
-if (typeof navigator === 'undefined') {
-  webgpuReason = 'no navigator (SSR?)';
-} else if (typeof (navigator as any).gpu === 'undefined') {
-  webgpuReason = 'navigator.gpu not found — browser/OS may not support WebGPU, or it needs a flag';
-} else {
-  webgpuAvailable = true;
-}
-const rendererType = ref<string>(webgpuAvailable ? 'webgpu' : 'webgl2');
 const debugPreview = ref<string>('none');
-log(`Renderer: ${rendererType.value}${webgpuReason ? ' (' + webgpuReason + ')' : ''}`);
 
 function fmt(ms: number | undefined): string {
   if (ms === undefined || ms === null) return '-';

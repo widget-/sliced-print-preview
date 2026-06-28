@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       '@sliced/shared': resolve(__dirname, '../shared/src'),
       '@sliced/webgpu-renderer': resolve(__dirname, '../webgpu-renderer/src'),
+      '@sliced/webgl-renderer': resolve(__dirname, '../webgl-renderer/src'),
     },
   },
   test: {

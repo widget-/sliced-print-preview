@@ -13,7 +13,7 @@ const mountOptions = {
     stubs: {
       ModelViewer: {
         template: '<div class="mock-model-viewer"><slot /></div>',
-        props: ['glbUrl', 'rendererType', 'debugPreview'],
+        props: ['glbUrl', 'debugPreview'],
       },
     },
   },
@@ -112,7 +112,7 @@ describe('App', () => {
     expect(viewer.exists()).toBe(true);
   });
 
-  it('passes debugPreview prop to ModelViewer for both renderers', async () => {
+  it('passes debugPreview prop to ModelViewer', async () => {
     const wrapper = mount(App, mountOptions);
 
     const vm = wrapper.vm as any;
@@ -127,13 +127,6 @@ describe('App', () => {
     await wrapper.vm.$nextTick();
 
     // Verify App state is correct
-    expect(vm.debugPreview).toBe('velocity');
-
-    // Switch renderer to WebGL2
-    vm.rendererType = 'webgl2';
-    await wrapper.vm.$nextTick();
-
-    // debug prop shouldn't change — should still be 'velocity'
     expect(vm.debugPreview).toBe('velocity');
   });
 });
