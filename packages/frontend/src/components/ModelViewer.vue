@@ -346,15 +346,14 @@ async function loadSegbinModel(url: string) {
 
     // TAA post-process (uses Babylon's default vertex shader, reusable for stable output)
     const pp = new PostProcess("taa", "taa",
-      ["uBlendFactor", "uScreenSize"],
+      ["uBlendFactor"],
       ["uHistoryTex"],
       { width: w, height: h }, camera, Texture.NEAREST_SAMPLINGMODE,
       engine, true // reusable=true → output texture stable between frames
     );
     pp.onApplyObservable.add((effect) => {
       effect.setTexture("uHistoryTex", taaHistoryTex!);
-      effect.setFloat("uBlendFactor", 0.1);
-      effect.setFloat2("uScreenSize", engine.getRenderWidth(), engine.getRenderHeight());
+      effect.setFloat("uBlendFactor", 0.15);
     });
     // After render, save output as next frame's history reference
     // (reusable=true keeps the double-buffered texture valid between frames)

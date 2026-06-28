@@ -607,16 +607,14 @@ export const TAA_PIXEL_SHADER = /* glsl */ `
   uniform sampler2D textureSampler;
   uniform sampler2D uHistoryTex;
   uniform float uBlendFactor;
-  uniform vec2 uScreenSize;
 
   void main() {
-    ivec2 icoord = ivec2(gl_FragCoord.xy);
     vec3 current = texture2D(textureSampler, vUV).rgb;
 
-    // Sample history (same pixel — baseline TAA)
-    vec3 history = texelFetch(uHistoryTex, icoord, 0).rgb;
+    // Sample history at the same UV (frame-accumulator TAA)
+    vec3 history = texture2D(uHistoryTex, vUV).rgb;
 
-    // Blend in linear space: mostly history (accumulated AA) + small current
+    // Blend: mostly history (accumulated AA) + small current frame
     vec3 result = mix(history, current, vec3(uBlendFactor));
 
     gl_FragColor = vec4(result, 1.0);
