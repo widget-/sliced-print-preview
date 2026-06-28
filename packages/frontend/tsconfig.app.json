@@ -6,10 +6,8 @@
     "paths": {
       "@sliced/shared": ["../shared/src"],
       "@sliced/shared/*": ["../shared/src/*"],
-      "@sliced/webgpu-renderer": ["../webgpu-renderer/src"],
-      "@sliced/webgpu-renderer/*": ["../webgpu-renderer/src/*"],
-      "@sliced/webgl-renderer": ["../webgl-renderer/src"],
-      "@sliced/webgl-renderer/*": ["../webgl-renderer/src/*"]
+      "@sliced/playcanvas-renderer": ["../playcanvas-renderer/src"],
+      "@sliced/playcanvas-renderer/*": ["../playcanvas-renderer/src/*"]
     },
 
     /* Linting */

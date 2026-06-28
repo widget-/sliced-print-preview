@@ -71,23 +71,6 @@ function onMaterialChange() {
     ambientStrength: props.ambientStrength,
     baseColorTint: props.baseColorTint,
   });
-  if (renderer.ssaoEnabled !== undefined) {
-    renderer.ssaoEnabled = props.ssaoEnabled !== false;
-  }
-  // WebGPU-specific controls (safe-checked)
-  if (renderer.pipeline?.material?.useRoleColors !== undefined) {
-    renderer.pipeline.material.useRoleColors = props.roleColors !== false ? 1 : 0;
-    renderer.pipeline.writeMaterialUBO?.();
-  }
-  renderer.setShadowSoftness?.(props.shadowSoftness ?? 2.0);
-  renderer.setKeyLightIntensity?.(props.keyLightIntensity ?? 1.0);
-  renderer.setFillLightIntensity?.(props.fillLightIntensity ?? 0.4);
-  if (renderer.pipeline?.contactShadowDist !== undefined) {
-    renderer.pipeline.contactShadowDist = props.contactShadowDist;
-  }
-  renderer.setContactShadowStrength?.(props.contactShadowStrength ?? 1.0);
-  renderer.setSSAOIntensity?.(props.ssaoIntensity ?? 0.35);
-  renderer.setSSAORadius?.(props.ssaoRadius ?? 0.06);
 }
 
 watch(() => [
@@ -130,50 +113,15 @@ onMounted(async () => {
   const canvas = canvasEl.value!;
   const cont = container.value!;
 
-  // Feature-detect: try WebGPU first, fall back to WebGL 2.0
-  const hasWebGPU = !!navigator.gpu;
+  // PlayCanvas handles WebGPU → WebGL2 fallback internally
+  const { PlayCanvasRenderer } = await import('@sliced/playcanvas-renderer');
+  const r = new PlayCanvasRenderer();
+  await r.mount(cont, canvas);
+  renderer = r;
+  await setupRenderer(r);
+  log('PlayCanvas renderer ready');
 
-  if (hasWebGPU) {
-    // Test if we can actually get a WebGPU adapter
-    try {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        await mountWebGPU();
-        return;
-      }
-    } catch { /* fall through to WebGL */ }
-    log('WebGPU adapter not available, falling back to WebGL 2.0');
-  } else {
-    log('WebGPU not available, using WebGL 2.0');
-  }
-
-  await mountWebGL();
-
-  async function mountWebGPU() {
-    const { WebGPURenderer } = await import('@sliced/webgpu-renderer');
-    const r = new WebGPURenderer();
-    await r.mount(cont, canvas);
-    renderer = r;
-    await setupRenderer(r, true);
-    log('WebGPU renderer ready');
-  }
-
-  async function mountWebGL() {
-    const testCanvas = document.createElement('canvas');
-    const testGl = testCanvas.getContext('webgl2');
-    if (!testGl) {
-      console.error('[ModelViewer] WebGL 2.0 not available — no renderer possible');
-      return;
-    }
-    const { WebGLRenderer } = await import('@sliced/webgl-renderer');
-    const r = new WebGLRenderer();
-    await r.mount(cont, canvas);
-    renderer = r;
-    await setupRenderer(r, false);
-    log('WebGL2 renderer ready');
-  }
-
-  async function setupRenderer(r: any, isWebGPU: boolean) {
+  async function setupRenderer(r: any) {
     // Stats keyboard toggle
     const onKey = (e: KeyboardEvent) => {
       if (e.key === '`') stats.value.show = !stats.value.show;
@@ -196,28 +144,6 @@ onMounted(async () => {
       ambientStrength: props.ambientStrength,
       baseColorTint: props.baseColorTint,
     });
-
-    if (isWebGPU) {
-      if (r.ssaoEnabled !== undefined) {
-        r.ssaoEnabled = props.ssaoEnabled !== false;
-      }
-      if (r.pipeline?.material) {
-        r.pipeline.material.useRoleColors = props.roleColors !== false ? 1 : 0;
-        r.pipeline.writeMaterialUBO();
-      }
-      if (props.shadowSoftness !== undefined) r.setShadowSoftness?.(props.shadowSoftness);
-      if (props.keyLightIntensity !== undefined) r.setKeyLightIntensity?.(props.keyLightIntensity);
-      if (props.fillLightIntensity !== undefined) r.setFillLightIntensity?.(props.fillLightIntensity);
-      if (props.contactShadowDist !== undefined) r.pipeline.contactShadowDist = props.contactShadowDist;
-      if (props.contactShadowStrength !== undefined) r.setContactShadowStrength?.(props.contactShadowStrength);
-      if (props.ssaoIntensity !== undefined) r.setSSAOIntensity?.(props.ssaoIntensity);
-      if (props.ssaoRadius !== undefined) r.setSSAORadius?.(props.ssaoRadius);
-      if (props.debugPreview) r.debugPreview = props.debugPreview;
-    } else {
-      // WebGL fallback supports fewer features
-      if (props.shadowSoftness !== undefined) r.setShadowSoftness?.(props.shadowSoftness);
-      if (props.keyLightIntensity !== undefined) r.setKeyLightIntensity?.(props.keyLightIntensity);
-    }
 
     if (props.segbinUrl) {
       const ms = await r.loadModel(props.segbinUrl);

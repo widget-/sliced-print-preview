@@ -2,15 +2,13 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 import { resolve } from 'path'
-import consoleRelay from '../webgpu-renderer/vite.plugin.console-relay'
 
 export default defineConfig({
-  plugins: [basicSsl(), vue(), consoleRelay()],
+  plugins: [basicSsl(), vue()],
   resolve: {
     alias: {
       '@sliced/shared': resolve(__dirname, '../shared/src'),
-      '@sliced/webgpu-renderer': resolve(__dirname, '../webgpu-renderer/src'),
-      '@sliced/webgl-renderer': resolve(__dirname, '../webgl-renderer/src'),
+      '@sliced/playcanvas-renderer': resolve(__dirname, '../playcanvas-renderer/src'),
     },
   },
   server: {
