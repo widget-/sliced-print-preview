@@ -237,7 +237,7 @@ void main() {
 }
 `;
 
-// ── GLSL fragment shader — simple directional light ──
+// ── GLSL fragment shader — Cook-Torrance GGX with material params ──
 const BODY_FRAG_GLSL = `
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
@@ -248,23 +248,62 @@ uniform vec3 matrix_viewPosition;
 uniform vec3 lightDir;
 uniform float lightIntensity;
 uniform float ambientStrength;
+uniform float uRoughness;
+uniform float uMetalness;
+uniform float uEnvIntensity;
+uniform float uSpecularStrength;
+uniform vec3 uBaseColorTint;
+
+const float PI = 3.14159265;
+
+float ggxDistribution(vec3 N, vec3 H, float a) {
+  float a2 = a * a;
+  float NdotH = max(dot(N, H), 0.0);
+  float NdotH2 = NdotH * NdotH;
+  float denom = NdotH2 * (a2 - 1.0) + 1.0;
+  return a2 / (PI * denom * denom);
+}
+
+float schlickFresnel(float NdotV, float f0) {
+  return f0 + (1.0 - f0) * pow(1.0 - NdotV, 5.0);
+}
+
+float smithG(vec3 N, vec3 V, vec3 L, float a) {
+  float k = (a + 1.0) * (a + 1.0) / 8.0;
+  float NdotV = max(dot(N, V), 0.0);
+  float NdotL = max(dot(N, L), 0.0);
+  return (NdotV / (NdotV * (1.0 - k) + k)) * (NdotL / (NdotL * (1.0 - k) + k));
+}
 
 void main() {
   vec3 N = normalize(vWorldNormal);
-  vec3 L = normalize(lightDir);
   vec3 V = normalize(matrix_viewPosition - vWorldPos);
+  vec3 L = normalize(lightDir);
   vec3 H = normalize(L + V);
 
   float NdotL = max(dot(N, L), 0.0);
-  float NdotH = max(dot(N, H), 0.0);
-  float spec = pow(NdotH, 32.0);
+  float NdotV = max(dot(N, V), 0.001);
 
-  vec3 ambient = vColor * ambientStrength;
-  vec3 diffuse = vColor * NdotL * lightIntensity;
-  vec3 specular = vec3(1.0) * spec * lightIntensity * 0.5;
+  float roughness = max(uRoughness, 0.05);
+  float metalness = clamp(uMetalness, 0.0, 1.0);
 
-  vec3 result = ambient + diffuse + specular;
-  gl_FragColor = vec4(result, 1.0);
+  // Base colour: segment role colour tinted by user setting
+  vec3 baseColor = vColor * uBaseColorTint;
+
+  // Fresnel f0: blend between dielectric (0.04) and metallic (baseColor)
+  vec3 f0 = mix(vec3(0.04), baseColor, metalness);
+
+  float D = ggxDistribution(N, H, roughness * roughness);
+  vec3 F = vec3(schlickFresnel(NdotV, dot(f0, vec3(0.333))));
+  float G = smithG(N, V, L, roughness * roughness);
+
+  vec3 specular = (D * F * G) / max(4.0 * NdotV * NdotL, 0.001);
+  vec3 diffuse = baseColor / PI * (1.0 - mix(0.0, 1.0, metalness));
+
+  vec3 ambient = baseColor * ambientStrength * uEnvIntensity;
+  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL * lightIntensity * PI;
+
+  gl_FragColor = vec4(lit, 1.0);
 }
 `;
 
@@ -359,14 +398,56 @@ varying vec3 vColor;
 uniform vec3 lightDir;
 uniform float lightIntensity;
 uniform float ambientStrength;
+uniform float uRoughness;
+uniform float uMetalness;
+uniform float uEnvIntensity;
+uniform float uSpecularStrength;
+uniform vec3 uBaseColorTint;
+
+const float PI = 3.14159265;
+
+float ggxDistribution(vec3 N, vec3 H, float a) {
+  float a2 = a * a;
+  float NdotH = max(dot(N, H), 0.0);
+  float NdotH2 = NdotH * NdotH;
+  float denom = NdotH2 * (a2 - 1.0) + 1.0;
+  return a2 / (PI * denom * denom);
+}
+float schlickFresnel(float NdotV, float f0) {
+  return f0 + (1.0 - f0) * pow(1.0 - NdotV, 5.0);
+}
+float smithG(vec3 N, vec3 V, vec3 L, float a) {
+  float k = (a + 1.0) * (a + 1.0) / 8.0;
+  float NdotV = max(dot(N, V), 0.0);
+  float NdotL = max(dot(N, L), 0.0);
+  return (NdotV / (NdotV * (1.0 - k) + k)) * (NdotL / (NdotL * (1.0 - k) + k));
+}
 
 void main() {
   vec3 N = normalize(vWorldNormal);
+  // Caps don't have camera position — estimate view dir
+  vec3 V = normalize(vec3(0.0, 0.0, 1.0));
   vec3 L = normalize(lightDir);
+  vec3 H = normalize(L + V);
+
   float NdotL = max(dot(N, L), 0.0);
-  vec3 ambient = vColor * ambientStrength;
-  vec3 diffuse = vColor * NdotL * lightIntensity;
-  gl_FragColor = vec4(ambient + diffuse, 1.0);
+  float NdotV = max(dot(N, V), 0.001);
+
+  float roughness = max(uRoughness, 0.05);
+  float metalness = clamp(uMetalness, 0.0, 1.0);
+  vec3 baseColor = vColor * uBaseColorTint;
+  vec3 f0 = mix(vec3(0.04), baseColor, metalness);
+
+  float D = ggxDistribution(N, H, roughness * roughness);
+  vec3 F = vec3(schlickFresnel(NdotV, dot(f0, vec3(0.333))));
+  float G = smithG(N, V, L, roughness * roughness);
+
+  vec3 specular = (D * F * G) / max(4.0 * NdotV * NdotL, 0.001);
+  vec3 diffuse = baseColor / PI * (1.0 - mix(0.0, 1.0, metalness));
+  vec3 ambient = baseColor * ambientStrength * uEnvIntensity;
+  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL * lightIntensity * PI;
+
+  gl_FragColor = vec4(lit, 1.0);
 }
 `;
 
@@ -382,6 +463,7 @@ export class PlayCanvasRenderer implements Renderer {
   private _fpsFrames = 0;
   private _fpsTime = 0;
   private _material?: pc.ShaderMaterial;
+  private _capMaterial?: pc.ShaderMaterial;
 
   stats = { fps: 0, triangles: 0 };
 
@@ -509,7 +591,15 @@ export class PlayCanvasRenderer implements Renderer {
       data: interleavedData.buffer as ArrayBuffer,
     });
 
-    const ib = new pc.IndexBuffer(device, pc.INDEXFORMAT_UINT16, bodyGeo.indices.length, pc.BUFFER_STATIC, bodyGeo.indices.buffer as ArrayBuffer);
+    // Reverse triangle winding: swap second/third vertex in each triangle
+    // (Y‑up basis has opposite handedness from the geometry's Z‑up origin)
+    const revIndices = new Uint16Array(bodyGeo.indices.length);
+    for (let i = 0; i < bodyGeo.indices.length; i += 3) {
+      revIndices[i + 0] = bodyGeo.indices[i + 0];
+      revIndices[i + 1] = bodyGeo.indices[i + 2]; // swap
+      revIndices[i + 2] = bodyGeo.indices[i + 1];
+    }
+    const ib = new pc.IndexBuffer(device, pc.INDEXFORMAT_UINT16, revIndices.length, pc.BUFFER_STATIC, revIndices.buffer as ArrayBuffer);
 
     // Create mesh
     const mesh = new pc.Mesh(device);
@@ -562,7 +652,8 @@ void main() {
     // Disable instancing temporarily for debug shader
     // (instancing attributes not declared in debug shader)
 
-    // Back-face culling (default, matching WebGPU)
+    // Back-face culling (winding reversed above to match Y‑up)
+    this._material.cull = pc.CULLFACE_BACK;
 
     if (!DEBUG_SHADER) {
       // Enable instancing define for ShaderMaterial
@@ -647,6 +738,7 @@ void main() {
         },
       };
       const capMaterial = new pc.ShaderMaterial(capShaderDesc);
+      this._capMaterial = capMaterial;
       capMaterial.defines.set('INSTANCING', '');
       capMaterial.cull = pc.CULLFACE_NONE; // caps need reverse winding per WebGPU
       capMaterial.setParameter('lightDir', new Float32Array([1.0, 1.0, 2.0]));
@@ -673,6 +765,9 @@ void main() {
 
       console.log(`[PlayCanvas] Caps: ${capCount} instances, ${capGeo.indices.length} idx`);
       this.stats.triangles += Math.round((capGeo.indices.length / 3) * capCount / 1000);
+
+      // Apply current material properties to caps
+      this._writeMaterialParams();
     }
 
     const elapsed = performance.now() - t0;
@@ -680,11 +775,31 @@ void main() {
   }
 
   setMaterial(props: MaterialProps): void {
-    // Wire material properties to shader uniforms
-    if (this._material) {
-      // For now, just log — full PBR material binding will come when we
-      // integrate PlayCanvas's PBR shader chunks
-      console.log('[PlayCanvas] setMaterial:', props);
+    this._materialProps = props;
+    this._writeMaterialParams();
+  }
+
+  private _materialProps?: MaterialProps;
+
+  private _writeMaterialParams() {
+    const p = this._materialProps;
+    if (!p) return;
+
+    const tint: [number, number, number] = [
+      parseInt(p.baseColorTint.slice(1, 3), 16) / 255,
+      parseInt(p.baseColorTint.slice(3, 5), 16) / 255,
+      parseInt(p.baseColorTint.slice(5, 7), 16) / 255,
+    ];
+
+    const mats = [this._material, this._capMaterial];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.setParameter('uRoughness', p.roughness);
+      mat.setParameter('uMetalness', p.metalness);
+      mat.setParameter('uEnvIntensity', p.envIntensity);
+      mat.setParameter('uSpecularStrength', p.specularStrength);
+      mat.setParameter('ambientStrength', p.ambientStrength);
+      mat.setParameter('uBaseColorTint', new Float32Array(tint));
     }
   }
 
