@@ -568,4 +568,59 @@ export const SHADOW_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
+// ── Fullscreen copy shader (for saving TAA history) ──
+export const COPY_VERTEX_SHADER = /* glsl */ `
+  precision highp float;
+
+  in vec3 position;
+  out vec2 vUV;
+
+  void main() {
+    vUV = position.xy * 0.5 + 0.5;
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+  }
+`;
+
+export const COPY_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+
+  uniform sampler2D uTex;
+  in vec2 vUV;
+
+  void main() {
+    gl_FragColor = texture2D(uTex, vUV);
+  }
+`;
+
+// ── TAA resolve: frame-accumulator blend ──
+// Uses the PostProcess built-in vertex shader (provides vUV).
+// Blend:   result = lerp(history, current, blendFactor)
+// The camera is jittered each frame (Halton sequence) so sub-pixel
+// samples accumulate over time, producing an anti-aliased result.
+export const TAA_VERTEX_SHADER = ''; // use Babylon default
+
+export const TAA_PIXEL_SHADER = /* glsl */ `
+  precision highp float;
+
+  varying vec2 vUV;
+
+  uniform sampler2D textureSampler;
+  uniform sampler2D uHistoryTex;
+  uniform float uBlendFactor;
+  uniform vec2 uScreenSize;
+
+  void main() {
+    ivec2 icoord = ivec2(gl_FragCoord.xy);
+    vec3 current = texture2D(textureSampler, vUV).rgb;
+
+    // Sample history (same pixel — baseline TAA)
+    vec3 history = texelFetch(uHistoryTex, icoord, 0).rgb;
+
+    // Blend in linear space: mostly history (accumulated AA) + small current
+    vec3 result = mix(history, current, vec3(uBlendFactor));
+
+    gl_FragColor = vec4(result, 1.0);
+  }
+`;
+
 

@@ -18,15 +18,18 @@ import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial';
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { RenderTargetTexture } from '@babylonjs/core/Materials/Textures/renderTargetTexture';
+import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
+import { Effect } from '@babylonjs/core/Materials/effect';
 import { HDRTools } from '@babylonjs/core/Misc/HighDynamicRange/hdr';
-import { TAARenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/taaRenderingPipeline';
-import { FxaaPostProcess } from '@babylonjs/core/PostProcesses/fxaaPostProcess';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 
 import { parseSegbin, buildShaderMeshes, Role } from '../renderer/SegbinLoader';
 import type { SegbinData } from '@sliced/shared';
 import type { BuildResult } from '../renderer/SegbinLoader';
 import { LOD_BODY_GEO, LOD_CAP_GEO } from '../renderer/geometry';
+import {
+  TAA_PIXEL_SHADER,
+} from '../renderer/shaders';
 
 
 const container = ref<HTMLDivElement>();
@@ -147,8 +150,7 @@ function log(msg: string, ...args: any[]) {
 }
 
 let envMapTexture: RawTexture | null = null;
-let taaPipeline: TAARenderingPipeline | null = null;
-let fxaaProcess: FxaaPostProcess | null = null;
+let taaPipeline: any = null; // replaced by custom TAA below
 
 // Shadow render targets
 let shadowRT: RenderTargetTexture | null = null;
@@ -162,6 +164,12 @@ let groundMat: ShaderMaterial | null = null;
 // Precomputed model bounding box (for shadow VP)
 let modelCenter = new Vector3(0, 0, 0);
 let modelExtent = 1;
+
+// ── Custom TAA state ──
+let taaPost: PostProcess | null = null;
+let taaHistoryTex: Texture | null = null;
+let taaFrame = 0;
+let depthRenderer: any = null; // Babylon's DepthRenderer
 
 async function loadEnvMap(url?: string) {
   const hdrUrl = url || props.envMapUrl;
@@ -321,6 +329,52 @@ async function loadSegbinModel(url: string) {
     groundMesh.position.z = minZ - 5;
   }
 
+  // Set up TAA post-process (one-time)
+  if (!taaPost) {
+    const w = engine.getRenderWidth();
+    const h = engine.getRenderHeight();
+
+    // Register TAA pixel shader with Babylon's shader store
+    Effect.ShadersStore["taaPixelShader"] = TAA_PIXEL_SHADER;
+
+    // History texture (initialised to black)
+    taaHistoryTex = new RawTexture(new Float32Array(w * h * 4), w, h,
+      Engine.TEXTUREFORMAT_RGBA, scene, false, false,
+      Texture.NEAREST_SAMPLINGMODE, Engine.TEXTURETYPE_HALF_FLOAT);
+    taaHistoryTex.wrapU = Texture.CLAMP_ADDRESSMODE;
+    taaHistoryTex.wrapV = Texture.CLAMP_ADDRESSMODE;
+
+    // TAA post-process (uses Babylon's default vertex shader, reusable for stable output)
+    const pp = new PostProcess("taa", "taa",
+      ["uBlendFactor", "uScreenSize"],
+      ["uHistoryTex"],
+      { width: w, height: h }, camera, Texture.NEAREST_SAMPLINGMODE,
+      engine, true // reusable=true → output texture stable between frames
+    );
+    pp.onApplyObservable.add((effect) => {
+      effect.setTexture("uHistoryTex", taaHistoryTex!);
+      effect.setFloat("uBlendFactor", 0.1);
+      effect.setFloat2("uScreenSize", engine.getRenderWidth(), engine.getRenderHeight());
+    });
+    // After render, save output as next frame's history reference
+    // (reusable=true keeps the double-buffered texture valid between frames)
+    pp.onAfterRenderObservable.add(() => {
+      if (taaPost) {
+        const internalTex = taaPost.outputTexture;
+        if (internalTex && taaHistoryTex) {
+          taaHistoryTex.dispose();
+          const wrapper = new Texture(null, scene);
+          wrapper._texture = internalTex;
+          wrapper.wrapU = Texture.CLAMP_ADDRESSMODE;
+          wrapper.wrapV = Texture.CLAMP_ADDRESSMODE;
+          taaHistoryTex = wrapper;
+        }
+      }
+    });
+    taaPost = pp;
+    log('Custom TAA post-process ready');
+  }
+
   const totalMs = performance.now() - t0;
   log(`Segbin loaded in ${totalMs.toFixed(0)}ms`);
   emit('model-loaded', Math.round(totalMs));
@@ -375,6 +429,19 @@ function renderShadowMap(buildResult: BuildResult, rt: RenderTargetTexture, ligh
   }
   rt.render();
   mesh.material = origMat;
+}
+
+// ── Halton sequence for TAA sub-pixel jitter ──
+
+function halton2(i: number): number {
+  let f = 1, r = 0;
+  while (i > 0) { f /= 2; r += (i & 1) * f; i >>= 1; }
+  return r - 0.5;
+}
+function halton3(i: number): number {
+  let f = 1, r = 0;
+  while (i > 0) { f /= 3; r += (i % 3) * f; i = Math.floor(i / 3); }
+  return r - 0.5;
 }
 
 function renderFrame() {
@@ -502,7 +569,23 @@ function renderFrame() {
     }
   }
 
-  scene.render();
+  // ── TAA: apply Halton jitter to camera projection ──
+  if (taaPost) {
+    const w = engine.getRenderWidth();
+    const h = engine.getRenderHeight();
+    const jx = halton2(taaFrame);
+    const jy = halton3(taaFrame);
+    const origProj = camera.getProjectionMatrix().clone();
+    const proj = camera.getProjectionMatrix();
+    proj.m[8] += (jx * 2) / w;
+    proj.m[9] += (jy * 2) / h;
+    scene.render();
+    // Restore original projection for next frame's fresh jitter
+    camera.getProjectionMatrix().copyFrom(origProj);
+    taaFrame++;
+  } else {
+    scene.render();
+  }
 
   // FPS
   statsFrames++;
@@ -598,15 +681,11 @@ onMounted(() => {
     camera.lowerBetaLimit = 0.01;
     camera.attachControl(true);
 
-    // Post-processing
-    const taa = new TAARenderingPipeline('taa', scene, [camera], 2);
-    taa.samples = 8;
-    taa.reprojectHistory = false;
-    taa.disableOnCameraMove = true;
-    taaPipeline = taa;
+    // Post-processing — custom velocity TAA (replaces Babylon TAA+FXAA)
+    // Depth renderer for velocity pass (stores non-linear depth for reprojection)
+    const dr = scene.enableDepthRenderer(camera, true, false, true);
+    depthRenderer = dr;
 
-    const fxaa = new FxaaPostProcess('fxaa', 1.0, camera);
-    fxaaProcess = fxaa;
 
 
     // Lighting
@@ -745,8 +824,10 @@ onBeforeUnmount(() => {
   shadowRT2?.dispose();
   shadowRT = null;
   shadowRT2 = null;
-  taaPipeline?.dispose();
-  fxaaProcess?.dispose();
+  taaPost?.dispose();
+  taaPost = null;
+  taaHistoryTex?.dispose();
+  taaHistoryTex = null;
   for (const m of segbinMeshes) {
     m.dispose();
   }
