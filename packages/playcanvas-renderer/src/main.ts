@@ -244,7 +244,7 @@ varying vec3 vWorldNormal;
 varying vec3 vColor;
 varying vec4 vClipPos;
 
-uniform vec3 matrix_viewPosition;
+uniform vec3 camera_position;
 uniform vec3 lightDir;
 uniform float lightIntensity;
 uniform float ambientStrength;
@@ -277,7 +277,7 @@ float smithG(vec3 N, vec3 V, vec3 L, float a) {
 
 void main() {
   vec3 N = normalize(vWorldNormal);
-  vec3 V = normalize(matrix_viewPosition - vWorldPos);
+  vec3 V = normalize(camera_position - vWorldPos);
   vec3 L = normalize(lightDir);
   vec3 H = normalize(L + V);
 
@@ -462,6 +462,7 @@ export class PlayCanvasRenderer implements Renderer {
   private _statsTimer?: ReturnType<typeof setInterval>;
   private _fpsFrames = 0;
   private _fpsTime = 0;
+  private _cameraFrame?: pc.CameraFrame;
   private _material?: pc.ShaderMaterial;
   private _capMaterial?: pc.ShaderMaterial;
 
@@ -481,6 +482,9 @@ export class PlayCanvasRenderer implements Renderer {
     });
 
     const app = this.app;
+
+    // Start app (initializes component systems, required for CameraFrame)
+    app.start();
 
     // Disable auto-render — we control the loop
     app.autoRender = false;
@@ -531,13 +535,16 @@ export class PlayCanvasRenderer implements Renderer {
 
     // ── CameraFrame (SSAO + TAA + tone mapping) ──
     const cameraFrame = new pc.CameraFrame(app, this._cameraEntity.camera!);
+    this._cameraFrame = cameraFrame;
     cameraFrame.ssao.type = pc.SSAOTYPE_COMBINE;
     cameraFrame.ssao.blurEnabled = true;
     cameraFrame.taa.enabled = true;
     cameraFrame.taa.jitter = 1.0;
-    // Keep default tone mapping (ACES) and bloom disabled
+    cameraFrame.bloom.enabled = true;
+    cameraFrame.bloom.intensity = 0.3;
+    // Keep default tone mapping (ACES)
 
-    console.log('[PlayCanvas] CameraFrame enabled: SSAO + TAA');
+    console.log('[PlayCanvas] CameraFrame enabled: SSAO + TAA + Bloom');
 
     // ── Skybox placeholder ──
     app.scene.envAtlas = null;
@@ -813,6 +820,14 @@ void main() {
     }
   }
 
+  setSSAOIntensity(v: number) {
+    if (this._cameraFrame) this._cameraFrame.ssao.intensity = v;
+  }
+
+  setSSAORadius(v: number) {
+    if (this._cameraFrame) this._cameraFrame.ssao.radius = v;
+  }
+
   async setEnvMap(url: string): Promise<void> {
     console.log('[PlayCanvas] setEnvMap:', url, '(deferred — IBL integration pending)');
   }
@@ -937,13 +952,22 @@ void main() {
     requestAnimationFrame(this._loop);
   }
 
+  private _lastFrameMs = 0;
+
   private _loop = () => {
     if (this._disposed || !this._animate) {
       this._animate = false;
       return;
     }
+
+    const now = performance.now();
+    const dt = this._lastFrameMs ? (now - this._lastFrameMs) / 1000 : 0.016;
+    this._lastFrameMs = now;
+
     this._updateCamera();
+    this.app.update(dt);
     this.app.render();
+    this._fpsFrames++;
     this._fpsFrames++;
 
     // Debug: log camera position on first 5 frames
