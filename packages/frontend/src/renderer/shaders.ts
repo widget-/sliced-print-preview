@@ -571,8 +571,7 @@ export const SHADOW_FRAGMENT_SHADER = /* glsl */ `
 // ── TAA shader: double-buffered frame accumulator ──
 // Reads current scene render + history (previous frame's scene render),
 // blends them with a small current-frame weight to build AA over time.
-export const TAA_FS_VERTEX = /* glsl */ `
-  #version 300 es
+export const TAA_FS_VERTEX = /* glsl */ `#version 300 es
   precision highp float;
   void main() {
     vec2 pos = vec2(
@@ -583,8 +582,7 @@ export const TAA_FS_VERTEX = /* glsl */ `
   }
 `;
 
-export const TAA_FS_FRAGMENT = /* glsl */ `
-  #version 300 es
+export const TAA_FS_FRAGMENT = /* glsl */ `#version 300 es
   precision highp float;
   uniform sampler2D uCurrentTex;
   uniform sampler2D uDepthTex;
@@ -601,9 +599,9 @@ export const TAA_FS_FRAGMENT = /* glsl */ `
     ivec2 xy = ivec2(max(p, vec2(0.0)));
     vec2 f = p - vec2(xy);
     vec3 c00 = texelFetch(tex, xy + ivec2(0, 0), 0).rgb;
-    vec3 c10 = texelFetch(tex, min(xy + ivec2(1, 0), ivec2(texSize - 1)), 0).rgb;
-    vec3 c01 = texelFetch(tex, min(xy + ivec2(0, 1), ivec2(texSize - 1)), 0).rgb;
-    vec3 c11 = texelFetch(tex, min(xy + ivec2(1, 1), ivec2(texSize - 1)), 0).rgb;
+    vec3 c10 = texelFetch(tex, min(xy + ivec2(1, 0), ivec2(texSize - 1.0)), 0).rgb;
+    vec3 c01 = texelFetch(tex, min(xy + ivec2(0, 1), ivec2(texSize - 1.0)), 0).rgb;
+    vec3 c11 = texelFetch(tex, min(xy + ivec2(1, 1), ivec2(texSize - 1.0)), 0).rgb;
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
   }
 

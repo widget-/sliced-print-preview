@@ -341,7 +341,7 @@ async function loadSegbinModel(url: string) {
 
     // Two offscreen render targets for ping-pong accumulation
     for (let i = 0; i < 2; i++) {
-      const rt = new RenderTargetTexture(`taa_${i}`, w, h, scene, false, true, Engine.TEXTURETYPE_HALF_FLOAT);
+      const rt = new RenderTargetTexture(`taa_${i}`, { width: w, height: h }, scene, false, true, Engine.TEXTURETYPE_HALF_FLOAT);
       rt.createDepthStencilTexture(0); // depth texture for correct rendering
       rt.wrapU = Texture.CLAMP_ADDRESSMODE;
       rt.wrapV = Texture.CLAMP_ADDRESSMODE;
@@ -433,6 +433,9 @@ function renderShadowMap(buildResult: BuildResult, rt: RenderTargetTexture, ligh
   }
   rt.render();
   mesh.material = origMat;
+  // Force-unbind shadow framebuffer to avoid feedback when scene reads shadow textures
+  const gl = (engine as any)._gl as WebGL2RenderingContext;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
 // ── Halton sequence for TAA sub-pixel jitter ──
@@ -591,6 +594,8 @@ function renderFrame() {
     const curIdx = taaIndex;
     const curRT = taaRTs[curIdx];
     curRT.render();
+    // Force-unbind offscreen RT framebuffer before TAA pass reads its textures
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
     // 3. Restore camera projection
     camera.getProjectionMatrix().copyFrom(origProj);
