@@ -18,8 +18,6 @@ import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial';
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
 import { RenderTargetTexture } from '@babylonjs/core/Materials/Textures/renderTargetTexture';
-import { PostProcess } from '@babylonjs/core/PostProcesses/postProcess';
-import { Effect } from '@babylonjs/core/Materials/effect';
 import { HDRTools } from '@babylonjs/core/Misc/HighDynamicRange/hdr';
 import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 
@@ -28,7 +26,7 @@ import type { SegbinData } from '@sliced/shared';
 import type { BuildResult } from '../renderer/SegbinLoader';
 import { LOD_BODY_GEO, LOD_CAP_GEO } from '../renderer/geometry';
 import {
-  TAA_PIXEL_SHADER,
+  TAA_FS_VERTEX, TAA_FS_FRAGMENT,
 } from '../renderer/shaders';
 
 
@@ -166,10 +164,17 @@ let modelCenter = new Vector3(0, 0, 0);
 let modelExtent = 1;
 
 // ── Custom TAA state ──
-let taaPost: PostProcess | null = null;
-let taaHistoryTex: Texture | null = null;
+// Two scene RTs for double-buffered frame accumulation
+let taaRTs: RenderTargetTexture[] = [];
+let taaIndex = 0; // which RT is current (0 or 1)
 let taaFrame = 0;
-let depthRenderer: any = null; // Babylon's DepthRenderer
+let taaProgram: WebGLProgram | null = null; // fullscreen tri shader
+let taaBlendLoc: WebGLUniformLocation | null = null;
+let taaPrevVPLoc: WebGLUniformLocation | null = null;
+let taaInvVPLoc: WebGLUniformLocation | null = null;
+let taaScreenSizeLoc: WebGLUniformLocation | null = null;
+let prevViewProj = Matrix.Identity(); // for velocity reprojection
+let depthRenderer: any = null; // Babylon's DepthRenderer (for future velocity)
 
 async function loadEnvMap(url?: string) {
   const hdrUrl = url || props.envMapUrl;
@@ -329,49 +334,49 @@ async function loadSegbinModel(url: string) {
     groundMesh.position.z = minZ - 5;
   }
 
-  // Set up TAA post-process (one-time)
-  if (!taaPost) {
+  // ── Set up double-buffered TAA ──
+  if (taaRTs.length === 0) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
 
-    // Register TAA pixel shader with Babylon's shader store
-    Effect.ShadersStore["taaPixelShader"] = TAA_PIXEL_SHADER;
+    // Two offscreen render targets for ping-pong accumulation
+    for (let i = 0; i < 2; i++) {
+      const rt = new RenderTargetTexture(`taa_${i}`, w, h, scene, false, true, Engine.TEXTURETYPE_HALF_FLOAT);
+      rt.createDepthStencilTexture(0); // depth texture for correct rendering
+      rt.wrapU = Texture.CLAMP_ADDRESSMODE;
+      rt.wrapV = Texture.CLAMP_ADDRESSMODE;
+      taaRTs.push(rt);
+    }
 
-    // History texture (initialised to black)
-    taaHistoryTex = new RawTexture(new Float32Array(w * h * 4), w, h,
-      Engine.TEXTUREFORMAT_RGBA, scene, false, false,
-      Texture.NEAREST_SAMPLINGMODE, Engine.TEXTURETYPE_HALF_FLOAT);
-    taaHistoryTex.wrapU = Texture.CLAMP_ADDRESSMODE;
-    taaHistoryTex.wrapV = Texture.CLAMP_ADDRESSMODE;
+    // Compile fullscreen-triangle TAA shader for the blend pass
+    const gl = (engine as any)._gl as WebGL2RenderingContext;
+    const vs = gl.createShader(gl.VERTEX_SHADER)!;
+    gl.shaderSource(vs, TAA_FS_VERTEX);
+    gl.compileShader(vs);
+    const fs = gl.createShader(gl.FRAGMENT_SHADER)!;
+    gl.shaderSource(fs, TAA_FS_FRAGMENT);
+    gl.compileShader(fs);
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, vs);
+    gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    gl.deleteShader(vs);
+    gl.deleteShader(fs);
+    taaProgram = prog;
+    taaBlendLoc = gl.getUniformLocation(prog, 'uBlendFactor');
+    taaPrevVPLoc = gl.getUniformLocation(prog, 'uPrevViewProj');
+    taaInvVPLoc = gl.getUniformLocation(prog, 'uInvViewProj');
+    taaScreenSizeLoc = gl.getUniformLocation(prog, 'uScreenSize');
+    prevViewProj = Matrix.Identity();
 
-    // TAA post-process (uses Babylon's default vertex shader, reusable for stable output)
-    const pp = new PostProcess("taa", "taa",
-      ["uBlendFactor"],
-      ["uHistoryTex"],
-      { width: w, height: h }, camera, Texture.NEAREST_SAMPLINGMODE,
-      engine, true // reusable=true → output texture stable between frames
-    );
-    pp.onApplyObservable.add((effect) => {
-      effect.setTexture("uHistoryTex", taaHistoryTex!);
-      effect.setFloat("uBlendFactor", 0.15);
-    });
-    // After render, save output as next frame's history reference
-    // (reusable=true keeps the double-buffered texture valid between frames)
-    pp.onAfterRenderObservable.add(() => {
-      if (taaPost) {
-        const internalTex = taaPost.outputTexture;
-        if (internalTex && taaHistoryTex) {
-          taaHistoryTex.dispose();
-          const wrapper = new Texture(null, scene);
-          wrapper._texture = internalTex;
-          wrapper.wrapU = Texture.CLAMP_ADDRESSMODE;
-          wrapper.wrapV = Texture.CLAMP_ADDRESSMODE;
-          taaHistoryTex = wrapper;
-        }
-      }
-    });
-    taaPost = pp;
-    log('Custom TAA post-process ready');
+    log(`TAA: ${w}x${h} double-buffered RTs ready`);
+  }
+
+  // Update render lists for both RTs
+  const renderList: import('@babylonjs/core').Mesh[] = [...segbinMeshes];
+  if (groundMesh) renderList.push(groundMesh);
+  for (const rt of taaRTs) {
+    rt.renderList = renderList;
   }
 
   const totalMs = performance.now() - t0;
@@ -568,19 +573,89 @@ function renderFrame() {
     }
   }
 
-  // ── TAA: apply Halton jitter to camera projection ──
-  if (taaPost) {
+  // ── TAA: double-buffered frame accumulation ──
+  if (taaRTs.length >= 2 && taaProgram) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
+    const gl = (engine as any)._gl as WebGL2RenderingContext;
+
+    // 1. Apply Halton jitter to camera projection
     const jx = halton2(taaFrame);
     const jy = halton3(taaFrame);
     const origProj = camera.getProjectionMatrix().clone();
     const proj = camera.getProjectionMatrix();
     proj.m[8] += (jx * 2) / w;
     proj.m[9] += (jy * 2) / h;
-    scene.render();
-    // Restore original projection for next frame's fresh jitter
+
+    // 2. Render scene to current RT
+    const curIdx = taaIndex;
+    const curRT = taaRTs[curIdx];
+    curRT.render();
+
+    // 3. Restore camera projection
     camera.getProjectionMatrix().copyFrom(origProj);
+
+    // 4. TAA blend: current RT + history RT → swapchain
+    const histIdx = 1 - curIdx;
+    const histRT = taaRTs[histIdx];
+
+    // Helper to get WebGL texture from Babylon InternalTexture
+    const getGLTex = (rt: RenderTargetTexture): WebGLTexture | null => {
+      const it = rt.renderTarget?.texture;
+      return it ? (it as any)._hardwareTexture?.underlyingResource ?? null : null;
+    };
+    const getGLDepthTex = (rt: RenderTargetTexture): WebGLTexture | null => {
+      const it = rt.renderTarget?.depthStencilTexture;
+      return it ? (it as any)._hardwareTexture?.underlyingResource ?? null : null;
+    };
+
+    const curTex = getGLTex(curRT);
+    const histTex = getGLTex(histRT);
+    const depthTex = getGLDepthTex(curRT);
+
+    // Compute view-projection matrices for velocity reprojection
+    const viewMat = camera.getViewMatrix();
+    // Jittered projection is still on the camera (not yet restored), so
+    // viewProj uses the jittered projection for correct NDC→world mapping
+    const jitteredProj = camera.getProjectionMatrix();
+    const viewProj = jitteredProj.clone().multiply(viewMat);
+    const invViewProj = Matrix.Invert(viewProj);
+
+    if (curTex && histTex && depthTex) {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, w, h);
+      gl.disable(gl.DEPTH_TEST);
+      gl.useProgram(taaProgram);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, curTex);
+      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uCurrentTex'), 0);
+
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, histTex);
+      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uHistoryTex'), 1);
+
+      gl.activeTexture(gl.TEXTURE2);
+      gl.bindTexture(gl.TEXTURE_2D, depthTex);
+      gl.uniform1i(gl.getUniformLocation(taaProgram, 'uDepthTex'), 2);
+
+      gl.uniform1f(taaBlendLoc, 0.15);
+      gl.uniform2f(taaScreenSizeLoc, w, h);
+
+      // Upload mat4 uniforms (column-major Float32Array)
+      gl.uniformMatrix4fv(taaInvVPLoc, false, invViewProj.asArray());
+      gl.uniformMatrix4fv(taaPrevVPLoc, false, prevViewProj.asArray());
+
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+      gl.enable(gl.DEPTH_TEST);
+    }
+
+    // 5. Save current VP as prev for next frame's reprojection
+    prevViewProj = viewProj;
+
+    // 6. Swap ping-pong
+    taaIndex = histIdx;
     taaFrame++;
   } else {
     scene.render();
@@ -680,8 +755,8 @@ onMounted(() => {
     camera.lowerBetaLimit = 0.01;
     camera.attachControl(true);
 
-    // Post-processing — custom velocity TAA (replaces Babylon TAA+FXAA)
-    // Depth renderer for velocity pass (stores non-linear depth for reprojection)
+    // Post-processing — depth renderer for future velocity-buffer TAA
+    // (current TAA uses double-buffered offscreen RTs in renderFrame)
     const dr = scene.enableDepthRenderer(camera, true, false, true);
     depthRenderer = dr;
 
@@ -823,10 +898,13 @@ onBeforeUnmount(() => {
   shadowRT2?.dispose();
   shadowRT = null;
   shadowRT2 = null;
-  taaPost?.dispose();
-  taaPost = null;
-  taaHistoryTex?.dispose();
-  taaHistoryTex = null;
+  for (const rt of taaRTs) rt.dispose();
+  taaRTs = [];
+  if (taaProgram) {
+    const gl = (engine as any)._gl as WebGL2RenderingContext;
+    gl.deleteProgram(taaProgram);
+    taaProgram = null;
+  }
   for (const m of segbinMeshes) {
     m.dispose();
   }

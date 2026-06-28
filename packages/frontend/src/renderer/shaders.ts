@@ -568,56 +568,67 @@ export const SHADOW_FRAGMENT_SHADER = /* glsl */ `
   }
 `;
 
-// ── Fullscreen copy shader (for saving TAA history) ──
-export const COPY_VERTEX_SHADER = /* glsl */ `
+// ── TAA shader: double-buffered frame accumulator ──
+// Reads current scene render + history (previous frame's scene render),
+// blends them with a small current-frame weight to build AA over time.
+export const TAA_FS_VERTEX = /* glsl */ `
+  #version 300 es
   precision highp float;
-
-  in vec3 position;
-  out vec2 vUV;
-
   void main() {
-    vUV = position.xy * 0.5 + 0.5;
-    gl_Position = vec4(position.xy, 0.0, 1.0);
+    vec2 pos = vec2(
+      float((gl_VertexID & 1) << 2) - 1.0,
+      float((gl_VertexID & 2) << 1) - 1.0
+    );
+    gl_Position = vec4(pos, 0.0, 1.0);
   }
 `;
 
-export const COPY_FRAGMENT_SHADER = /* glsl */ `
+export const TAA_FS_FRAGMENT = /* glsl */ `
+  #version 300 es
   precision highp float;
-
-  uniform sampler2D uTex;
-  in vec2 vUV;
-
-  void main() {
-    gl_FragColor = texture2D(uTex, vUV);
-  }
-`;
-
-// ── TAA resolve: frame-accumulator blend ──
-// Uses the PostProcess built-in vertex shader (provides vUV).
-// Blend:   result = lerp(history, current, blendFactor)
-// The camera is jittered each frame (Halton sequence) so sub-pixel
-// samples accumulate over time, producing an anti-aliased result.
-export const TAA_VERTEX_SHADER = ''; // use Babylon default
-
-export const TAA_PIXEL_SHADER = /* glsl */ `
-  precision highp float;
-
-  varying vec2 vUV;
-
-  uniform sampler2D textureSampler;
+  uniform sampler2D uCurrentTex;
+  uniform sampler2D uDepthTex;
   uniform sampler2D uHistoryTex;
   uniform float uBlendFactor;
+  uniform vec2 uScreenSize;
+  uniform mat4 uInvViewProj;
+  uniform mat4 uPrevViewProj;
+  layout(location = 0) out vec4 fragColor;
+
+  // Manual bilinear sample of the history texture
+  vec3 sampleBilinear(sampler2D tex, vec2 uv, vec2 texSize) {
+    vec2 p = uv * texSize - 0.5;
+    ivec2 xy = ivec2(max(p, vec2(0.0)));
+    vec2 f = p - vec2(xy);
+    vec3 c00 = texelFetch(tex, xy + ivec2(0, 0), 0).rgb;
+    vec3 c10 = texelFetch(tex, min(xy + ivec2(1, 0), ivec2(texSize - 1)), 0).rgb;
+    vec3 c01 = texelFetch(tex, min(xy + ivec2(0, 1), ivec2(texSize - 1)), 0).rgb;
+    vec3 c11 = texelFetch(tex, min(xy + ivec2(1, 1), ivec2(texSize - 1)), 0).rgb;
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+  }
 
   void main() {
-    vec3 current = texture2D(textureSampler, vUV).rgb;
+    ivec2 c = ivec2(gl_FragCoord.xy);
+    vec3 cur = texelFetch(uCurrentTex, c, 0).rgb;
 
-    // Sample history at the same UV (frame-accumulator TAA)
-    vec3 history = texture2D(uHistoryTex, vUV).rgb;
+    // Compute velocity from depth
+    float depth = texelFetch(uDepthTex, c, 0).r;
+    vec2 uv = gl_FragCoord.xy / uScreenSize;
+    vec4 ndc = vec4(uv.x * 2.0 - 1.0, -(uv.y * 2.0 - 1.0), depth * 2.0 - 1.0, 1.0);
+    vec4 world = uInvViewProj * ndc;
+    vec3 worldPos = world.xyz / world.w;
+    vec4 prevClip = uPrevViewProj * vec4(worldPos, 1.0);
+    vec2 prevNDC = prevClip.xy / prevClip.w;
+    vec2 velocity = prevNDC - ndc.xy;
 
-    // Blend: mostly history (accumulated AA) + small current frame
-    vec3 result = mix(history, current, vec3(uBlendFactor));
+    // Reproject history UV
+    vec2 histUV = uv + velocity * vec2(0.5, -0.5);
+    vec3 hist = (histUV.x >= 0.0 && histUV.x <= 1.0 && histUV.y >= 0.0 && histUV.y <= 1.0)
+      ? sampleBilinear(uHistoryTex, histUV, uScreenSize)
+      : cur; // out of bounds → use current
 
-    gl_FragColor = vec4(result, 1.0);
+    vec3 result = mix(hist, cur, vec3(uBlendFactor));
+    fragColor = vec4(result, 1.0);
   }
 `;
 
