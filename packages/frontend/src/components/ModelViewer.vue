@@ -126,8 +126,12 @@ function onMaterialChange() {
 
 // Auto-apply material props when they change from the parent
 watch(() => [props.roughness, props.metalness, props.envIntensity, props.specularStrength, props.ambientStrength, props.baseColorTint, props.ssaoEnabled, props.roleColors, props.shadowSoftness, props.keyLightIntensity, props.fillLightIntensity, props.contactShadowDist, props.contactShadowStrength, props.ssaoIntensity, props.ssaoRadius], onMaterialChange);
-// Forward debugPreview to the WebGPU renderer
-watch(() => props.debugPreview, (v) => { if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none'; });
+// Forward debugPreview to both renderers
+let webglDebugPreview = 'none';
+watch(() => props.debugPreview, (v) => {
+  webglDebugPreview = v ?? 'none';
+  if (webgpuRenderer) webgpuRenderer.debugPreview = v ?? 'none';
+}, { immediate: true });
 // Reload env map when the user picks a different HDRI
 watch(() => props.envMapUrl, (url) => {
   if (webgpuRenderer && typeof webgpuRenderer.setEnvMap === 'function') {
@@ -177,6 +181,7 @@ let taaBlendLoc: WebGLUniformLocation | null = null;
 let taaPrevVPLoc: WebGLUniformLocation | null = null;
 let taaInvVPLoc: WebGLUniformLocation | null = null;
 let taaScreenSizeLoc: WebGLUniformLocation | null = null;
+let taaDebugLoc: WebGLUniformLocation | null = null;
 let prevViewProj = Matrix.Identity();
 let taaFrame = 0;
 
@@ -339,6 +344,7 @@ async function loadSegbinModel(url: string) {
   }
 
   // ── Set up raw WebGL textures for swapchain-copy TAA ──
+  console.log('[TAA] setup check:', { taaReadTex: !!taaReadTex, hasEngine: !!engine });
   if (!taaReadTex && engine) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
@@ -370,13 +376,22 @@ async function loadSegbinModel(url: string) {
     const vs = gl.createShader(gl.VERTEX_SHADER)!;
     gl.shaderSource(vs, TAA_FS_VERTEX);
     gl.compileShader(vs);
+    if (!gl.getShaderParameter(vs, gl.COMPILE_STATUS)) {
+      log('TAA vertex shader error:', gl.getShaderInfoLog(vs));
+    }
     const fs = gl.createShader(gl.FRAGMENT_SHADER)!;
     gl.shaderSource(fs, TAA_FS_FRAGMENT);
     gl.compileShader(fs);
+    if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) {
+      log('TAA fragment shader error:', gl.getShaderInfoLog(fs));
+    }
     const prog = gl.createProgram()!;
     gl.attachShader(prog, vs);
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      log('TAA program link error:', gl.getProgramInfoLog(prog));
+    }
     gl.deleteShader(vs);
     gl.deleteShader(fs);
     taaProgram = prog;
@@ -384,6 +399,8 @@ async function loadSegbinModel(url: string) {
     taaPrevVPLoc = gl.getUniformLocation(prog, 'uPrevViewProj');
     taaInvVPLoc = gl.getUniformLocation(prog, 'uInvViewProj');
     taaScreenSizeLoc = gl.getUniformLocation(prog, 'uScreenSize');
+    taaDebugLoc = gl.getUniformLocation(prog, 'uDebugMode');
+    log('TAA uniform locations:', taaBlendLoc !== null, taaDebugLoc !== null);
     prevViewProj = Matrix.Identity();
 
     log(`TAA: ${w}x${h} raw textures ready`);
@@ -593,6 +610,11 @@ function renderFrame() {
   // ── TAA: swapchain-copy + separate depth pass ──
   // Depth is rendered separately using shadowMat (no texture reads = no feedback).
   // Color comes from swapchain copy. TAA blends both.
+  // Debug preview: check props (from parent) or window global (from console)
+  const debugMode = webglDebugPreview !== 'none' ? webglDebugPreview : (window as any).__debugPreview;
+  const isVelocityVis = debugMode === 'velocity';
+  const isDepthVis = debugMode === 'depth';
+
   if (taaReadTex && taaHistTex && taaDepthTex && taaProgram && buildResult) {
     const w = engine.getRenderWidth();
     const h = engine.getRenderHeight();
@@ -620,8 +642,10 @@ function renderFrame() {
     gl.bindFramebuffer(gl.FRAMEBUFFER, taaDepthFB!);
     gl.viewport(0, 0, w, h);
     gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
-    // Render the shadow mesh using Babylon's rendering
-    shadowMesh.render();
+    // Render the shadow mesh using Babylon's rendering (needs subMesh parameter)
+    for (let si = 0; si < shadowMesh.subMeshes.length; si++) {
+      shadowMesh.render(shadowMesh.subMeshes[si], false);
+    }
     shadowMesh.material = origShadowMat;
     // Reset Babylon's FB tracking to prevent feedback during main render
     (engine as any)._currentRenderTarget = null;
@@ -637,6 +661,9 @@ function renderFrame() {
     gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, taaReadTex);
     gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+
+    // Use identity prevVP on first frame so velocity is 0 (no previous frame)
+    const actualPrevVP = taaFrame === 0 ? viewProj : prevViewProj;
 
     // 6. TAA blend: readTex + histTex + depthTex → swapchain
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -659,7 +686,8 @@ function renderFrame() {
     gl.uniform1f(taaBlendLoc, 0.15);
     gl.uniform2f(taaScreenSizeLoc, w, h);
     gl.uniformMatrix4fv(taaInvVPLoc, false, invViewProj.asArray());
-    gl.uniformMatrix4fv(taaPrevVPLoc, false, prevViewProj.asArray());
+    gl.uniformMatrix4fv(taaPrevVPLoc, false, actualPrevVP.asArray());
+    gl.uniform1f(taaDebugLoc, isDepthVis ? 2.0 : (isVelocityVis ? 1.0 : 0.0));
 
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     gl.enable(gl.DEPTH_TEST);
@@ -669,9 +697,9 @@ function renderFrame() {
     gl.bindTexture(gl.TEXTURE_2D, taaHistTex);
     gl.copyTexSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
 
-    prevViewProj = viewProj;
+    prevViewProj = viewProj; // save for next frame's reprojection
     taaFrame++;
-  } else if (buildResult) {
+  } else {
     scene.render();
   }
 
@@ -869,6 +897,12 @@ onMounted(() => {
     // Controls
     window.addEventListener('keydown', (e) => {
       if (e.key === '`') { stats.value.show = !stats.value.show; }
+      if (e.key === 'd') {
+        const modes = ['none', 'velocity', 'depth'];
+        const cur = modes.indexOf(webglDebugPreview);
+        webglDebugPreview = modes[(cur + 1) % modes.length];
+        console.log('[TAA] debug mode:', webglDebugPreview);
+      }
     });
     statsTime = performance.now();
 

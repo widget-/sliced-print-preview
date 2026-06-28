@@ -591,6 +591,7 @@ export const TAA_FS_FRAGMENT = /* glsl */ `#version 300 es
   uniform vec2 uScreenSize;
   uniform mat4 uInvViewProj;
   uniform mat4 uPrevViewProj;
+  uniform float uDebugMode;
   layout(location = 0) out vec4 fragColor;
 
   // Manual bilinear sample of the history texture
@@ -621,12 +622,22 @@ export const TAA_FS_FRAGMENT = /* glsl */ `#version 300 es
 
     // Reproject history UV
     vec2 histUV = uv + velocity * vec2(0.5, -0.5);
+
+    // Debug: show velocity or depth as color
+    if (uDebugMode > 1.5) {
+      // Depth visualization
+      fragColor = vec4(vec3(depth), 1.0);
+    } else if (uDebugMode > 0.5) {
+      vec2 velVis = velocity * 0.5 + 0.5;
+      fragColor = vec4(velVis, 0.0, 1.0);
+    } else {
     vec3 hist = (histUV.x >= 0.0 && histUV.x <= 1.0 && histUV.y >= 0.0 && histUV.y <= 1.0)
       ? sampleBilinear(uHistoryTex, histUV, uScreenSize)
       : cur; // out of bounds → use current
 
     vec3 result = mix(hist, cur, vec3(uBlendFactor));
     fragColor = vec4(result, 1.0);
+    }
   }
 `;
 

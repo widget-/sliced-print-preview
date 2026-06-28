@@ -98,7 +98,7 @@
         :contactShadowStrength="contactShadowStrength"
         :ssaoIntensity="ssaoIntensity"
         :ssaoRadius="ssaoRadius"
-        :debugPreview="rendererType === 'webgpu' ? debugPreview : 'none'"
+        :debugPreview="debugPreview"
         @model-loaded="onModelLoaded"
       />
       <div v-show="!segbinUrl" class="placeholder">
