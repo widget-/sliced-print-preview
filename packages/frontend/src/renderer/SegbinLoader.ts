@@ -3,7 +3,7 @@ import type { SegbinData } from '@sliced/shared';
 import { roleColor } from './types'; // wrapped by Babylon adapter
 export { Role } from '@sliced/shared';
 import { LOD_BODY_GEO, LOD_CAP_GEO } from './geometry';
-import { SEGMENT_VERTEX_SHADER, ENDCAP_VERTEX_SHADER, SEGMENT_FRAGMENT_SHADER } from './shaders';
+import { SEGMENT_VERTEX_SHADER, ENDCAP_VERTEX_SHADER, SEGMENT_FRAGMENT_SHADER, SHADOW_VERTEX_SHADER, SHADOW_FRAGMENT_SHADER } from './shaders';
 
 export type { SegbinData } from '@sliced/shared';
 
@@ -158,8 +158,10 @@ function buildOneLOD(
       'uTexSize', 'uRoughness', 'uMetalness', 'uKeyLightDir', 'uCameraPos',
       'uShadowMatrix', 'uShadowMapSize', 'uEnvMapLOD', 'uEnvIntensity',
       'uBaseColorTint', 'uSpecularStrength', 'uAmbientStrength', 'uLodMode', 'uDbgNormFlip', 'uDbgHighlight', 'uDbgNormVis',
+      'uKeyLightDir2', 'uShadowMatrix2', 'uShadowMapSize2', 'uShadowSoftness',
+      'uUseRoleColors', 'uKeyLightIntensity', 'uFillLightIntensity',
     ],
-    samplers: ['segmentTexture', 'uShadowMap', 'uEnvMapEQ'],
+    samplers: ['segmentTexture', 'uShadowMap', 'uShadowMap2', 'uEnvMapEQ'],
     needAlphaBlending: false,
   });
   bodyMat.backFaceCulling = false;
@@ -173,7 +175,7 @@ function buildOneLOD(
   bodyMat.setFloat('uMetalness', 0.0);
   bodyMat.setVector3('uKeyLightDir', new Vector3(0.416, -0.25, 0.872));
   bodyMat.setVector2('uTexSize', new Vector2(texWidth, texHeight));
-  bodyMat.setVector2('uShadowMapSize', new Vector2(4096, 4096));
+  bodyMat.setVector2('uShadowMapSize', new Vector2(2048, 2048));
   bodyMat.setFloat('uEnvMapLOD', 0.0);
   bodyMat.setFloat('uEnvIntensity', 0.25);
   bodyMat.setVector3('uBaseColorTint', new Vector3(1, 1, 1));
@@ -183,6 +185,13 @@ function buildOneLOD(
   bodyMat.setFloat('uDbgNormFlip', 0.0);
   bodyMat.setFloat('uDbgHighlight', 0.0);
   bodyMat.setFloat('uDbgNormVis', 0.0);
+  bodyMat.setVector3('uKeyLightDir2', new Vector3(-0.5, 0.25, -0.3));
+  bodyMat.setTexture('uShadowMap2', dummyShadow);
+  bodyMat.setVector2('uShadowMapSize2', new Vector2(2048, 2048));
+  bodyMat.setFloat('uShadowSoftness', 2.0);
+  bodyMat.setFloat('uUseRoleColors', 1.0);
+  bodyMat.setFloat('uKeyLightIntensity', 1.0);
+  bodyMat.setFloat('uFillLightIntensity', 1.0);
 
   bodyMesh.material = bodyMat;
   bodyMesh.alwaysSelectAsActiveMesh = true;
@@ -233,8 +242,10 @@ function buildOneLOD(
       'uKeyLightDir', 'uCameraPos',
       'uShadowMatrix', 'uShadowMapSize', 'uEnvMapLOD', 'uEnvIntensity',
       'uBaseColorTint', 'uSpecularStrength', 'uAmbientStrength', 'uLodMode', 'uDbgHighlight', 'uDbgNormVis',
+      'uKeyLightDir2', 'uShadowMatrix2', 'uShadowMapSize2', 'uShadowSoftness',
+      'uUseRoleColors', 'uKeyLightIntensity', 'uFillLightIntensity',
     ],
-    samplers: ['segmentTexture', 'capMapTexture', 'uShadowMap', 'uEnvMapEQ'],
+    samplers: ['segmentTexture', 'capMapTexture', 'uShadowMap', 'uShadowMap2', 'uEnvMapEQ'],
     needAlphaBlending: false,
   });
   capMat.backFaceCulling = false;
@@ -250,7 +261,7 @@ function buildOneLOD(
   capMat.setVector3('uKeyLightDir', new Vector3(0.416, -0.25, 0.872));
   capMat.setVector2('uTexSize', new Vector2(texWidth, texHeight));
   capMat.setVector2('uCapTexSize', new Vector2(capTexelW, capTexelH));
-  capMat.setVector2('uShadowMapSize', new Vector2(4096, 4096));
+  capMat.setVector2('uShadowMapSize', new Vector2(2048, 2048));
   capMat.setFloat('uEnvMapLOD', 0.0);
   capMat.setFloat('uEnvIntensity', 0.25);
   capMat.setVector3('uBaseColorTint', new Vector3(1, 1, 1));
@@ -259,6 +270,13 @@ function buildOneLOD(
   capMat.setFloat('uLodMode', 0.0);
   capMat.setFloat('uDbgHighlight', 0.0);
   capMat.setFloat('uDbgNormVis', 0.0);
+  capMat.setVector3('uKeyLightDir2', new Vector3(-0.5, 0.25, -0.3));
+  capMat.setTexture('uShadowMap2', dummyShadow);
+  capMat.setVector2('uShadowMapSize2', new Vector2(2048, 2048));
+  capMat.setFloat('uShadowSoftness', 2.0);
+  capMat.setFloat('uUseRoleColors', 1.0);
+  capMat.setFloat('uKeyLightIntensity', 1.0);
+  capMat.setFloat('uFillLightIntensity', 1.0);
 
   capMesh.material = capMat;
   capMesh.alwaysSelectAsActiveMesh = true;
@@ -313,6 +331,10 @@ export interface BuildResult {
   texHeight: number;
   /** Total triangles for each LOD level (body + active caps) */
   trisPerLod: [number, number, number];
+  /** Shadow depth material (reused for both lights, uLightVP set per frame) */
+  shadowMat: ShaderMaterial;
+  /** Body mesh for shadow rendering (LOD 1 — 8-vertex cross-section) */
+  shadowMesh: Mesh;
 }
 
 export function buildShaderMeshes(
@@ -378,13 +400,33 @@ export function buildShaderMeshes(
     if (g.caps) meshes.push(g.caps);
   }
 
+  // ── Shadow depth material ──────────────────────────────────────────────
+  const shadowMat = new ShaderMaterial(`shadowMat`, scene, {
+    vertexSource: SHADOW_VERTEX_SHADER,
+    fragmentSource: SHADOW_FRAGMENT_SHADER,
+  }, {
+    attributes: ['position'],
+    uniforms: ['uLightVP', 'uSegmentCount', 'uHeightScale', 'uAreaCorrection', 'uTexSize'],
+    samplers: ['segmentTexture'],
+    needAlphaBlending: false,
+  });
+  shadowMat.backFaceCulling = false;
+  shadowMat.setTexture('segmentTexture', tex);
+  shadowMat.setFloat('uSegmentCount', count);
+  shadowMat.setFloat('uHeightScale', 1.25);
+  shadowMat.setFloat('uAreaCorrection', 1.1);
+  shadowMat.setVector2('uTexSize', new Vector2(texWidth, texHeight));
+
+  // Use LOD 1 body mesh for shadow rendering (8-vertex cross-section)
+  const shadowMesh = groups[1].body;
+
   const trisPerLod: [number, number, number] = [
     (LOD_BODY_GEO[0].indices.length / 3) * count + (LOD_CAP_GEO[0].indices.length / 3) * activeCaps,
     (LOD_BODY_GEO[1].indices.length / 3) * count + (LOD_CAP_GEO[1].indices.length / 3) * activeCaps,
     (LOD_BODY_GEO[2].indices.length / 3) * count,
   ];
 
-  return { meshes, groups, tex, capTex, texWidth, texHeight, trisPerLod };
+  return { meshes, groups, tex, capTex, texWidth, texHeight, trisPerLod, shadowMat, shadowMesh };
 }
 
 export async function loadSegbin(url: string): Promise<SegbinData> {

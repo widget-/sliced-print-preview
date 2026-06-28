@@ -12,14 +12,16 @@ import { Scene } from '@babylonjs/core/scene';
 import { ArcRotateCamera } from '@babylonjs/core/Cameras/arcRotateCamera';
 import { HemisphericLight } from '@babylonjs/core/Lights/hemisphericLight';
 import { DirectionalLight } from '@babylonjs/core/Lights/directionalLight';
-import { Vector3 } from '@babylonjs/core/Maths/math.vector';
+import { Vector2, Vector3, Matrix } from '@babylonjs/core/Maths/math.vector';
 import { Color4, Color3 } from '@babylonjs/core/Maths/math.color';
 import { ShaderMaterial } from '@babylonjs/core/Materials/shaderMaterial';
 import { RawTexture } from '@babylonjs/core/Materials/Textures/rawTexture';
 import { Texture } from '@babylonjs/core/Materials/Textures/texture';
+import { RenderTargetTexture } from '@babylonjs/core/Materials/Textures/renderTargetTexture';
 import { HDRTools } from '@babylonjs/core/Misc/HighDynamicRange/hdr';
 import { TAARenderingPipeline } from '@babylonjs/core/PostProcesses/RenderPipeline/Pipelines/taaRenderingPipeline';
 import { FxaaPostProcess } from '@babylonjs/core/PostProcesses/fxaaPostProcess';
+import { MeshBuilder } from '@babylonjs/core/Meshes/meshBuilder';
 
 import { parseSegbin, buildShaderMeshes, Role } from '../renderer/SegbinLoader';
 import type { SegbinData } from '@sliced/shared';
@@ -114,7 +116,10 @@ function onMaterialChange() {
     mat.setFloat('uSpecularStrength', props.specularStrength);
     mat.setFloat('uAmbientStrength', props.ambientStrength);
     mat.setColor3('uBaseColorTint', Color3.FromHexString(props.baseColorTint));
-    mat.setColor3('uBaseColorTint', Color3.FromHexString(props.baseColorTint));
+    mat.setFloat('uShadowSoftness', props.shadowSoftness ?? 2.0);
+    mat.setFloat('uUseRoleColors', props.roleColors !== false ? 1.0 : 0.0);
+    mat.setFloat('uKeyLightIntensity', props.keyLightIntensity ?? 1.0);
+    mat.setFloat('uFillLightIntensity', props.fillLightIntensity ?? 0.4);
   }
 }
 
@@ -144,6 +149,19 @@ function log(msg: string, ...args: any[]) {
 let envMapTexture: RawTexture | null = null;
 let taaPipeline: TAARenderingPipeline | null = null;
 let fxaaProcess: FxaaPostProcess | null = null;
+
+// Shadow render targets
+let shadowRT: RenderTargetTexture | null = null;
+let shadowRT2: RenderTargetTexture | null = null;
+let fillLight: DirectionalLight | null = null;
+
+// Ground plane
+let groundMesh: import('@babylonjs/core').Mesh | null = null;
+let groundMat: ShaderMaterial | null = null;
+
+// Precomputed model bounding box (for shadow VP)
+let modelCenter = new Vector3(0, 0, 0);
+let modelExtent = 1;
 
 async function loadEnvMap(url?: string) {
   const hdrUrl = url || props.envMapUrl;
@@ -245,17 +263,25 @@ async function loadSegbinModel(url: string) {
   const buildMs = performance.now() - tBuild;
   log(`  build: ${(buildMs).toFixed(0)}ms → ${result.meshes.length} meshes`);
 
+  // Create shadow render targets
+  if (!shadowRT) {
+    shadowRT = createShadowRT('shadowRT', scene);
+  }
+  if (!shadowRT2) {
+    shadowRT2 = createShadowRT('shadowRT2', scene);
+  }
+
   applyMaterialUniforms();
 
-  // Bounding box for camera positioning
+  // Bounding box for camera positioning and shadow VP
   let minX = Infinity, minY = Infinity, minZ = Infinity;
   let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-  const g = segbinData.geoms;
-  const roles = segbinData.roles;
+  const bbG = segbinData.geoms;
+  const bbRoles = segbinData.roles;
   for (let i = 0; i < segbinData.count; i++) {
-    if (HIDDEN_ROLES.has(roles[i])) continue;
-    const sx = g[i * 8], sy = g[i * 8 + 1], sz = g[i * 8 + 2];
-    const ex = g[i * 8 + 3], ey = g[i * 8 + 4], ez = g[i * 8 + 5];
+    if (HIDDEN_ROLES.has(bbRoles[i])) continue;
+    const sx = bbG[i * 8], sy = bbG[i * 8 + 1], sz = bbG[i * 8 + 2];
+    const ex = bbG[i * 8 + 3], ey = bbG[i * 8 + 4], ez = bbG[i * 8 + 5];
     if (sx < minX) minX = sx; if (sx > maxX) maxX = sx;
     if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
     if (sz < minZ) minZ = sz; if (sz > maxZ) maxZ = sz;
@@ -265,8 +291,10 @@ async function loadSegbinModel(url: string) {
   }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2, cz = (minZ + maxZ) / 2;
   const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ, 1);
+  modelCenter = new Vector3(cx, cy, cz);
+  modelExtent = maxDim;
 
-  camera.setTarget(new Vector3(cx, cy, cz));
+  camera.setTarget(modelCenter);
   camera.alpha = Math.PI / 4;
   camera.beta = Math.PI / 4;
   camera.radius = maxDim * 1.5;
@@ -279,6 +307,19 @@ async function loadSegbinModel(url: string) {
   sunLight.direction = new Vector3(cx, cy, cz)
     .subtract(sunLight.position)
     .normalize();
+
+  // Position fill light
+  if (fillLight) {
+    const fillPos = new Vector3(cx - maxDim * 0.5, cy + maxDim * 0.25, cz - maxDim * 0.3);
+    fillLight.position = fillPos;
+    fillLight.direction = modelCenter.subtract(fillPos).normalize();
+    fillLight.intensity = props.fillLightIntensity ?? 0.4;
+  }
+
+  // Lower ground plane to just below model
+  if (groundMesh) {
+    groundMesh.position.z = minZ - 5;
+  }
 
   const totalMs = performance.now() - t0;
   log(`Segbin loaded in ${totalMs.toFixed(0)}ms`);
@@ -294,19 +335,54 @@ function applyMaterialUniforms() {
     mat.setFloat('uSpecularStrength', props.specularStrength);
     mat.setFloat('uAmbientStrength', props.ambientStrength);
     mat.setColor3('uBaseColorTint', Color3.FromHexString(props.baseColorTint));
-    mat.setColor3('uBaseColorTint', Color3.FromHexString(props.baseColorTint));
     if (envMapTexture) {
       mat.setTexture('uEnvMapEQ', envMapTexture);
       mat.setFloat('uEnvMapLOD', 8.0);
     }
+    mat.setFloat('uShadowSoftness', props.shadowSoftness ?? 2.0);
+    mat.setFloat('uUseRoleColors', props.roleColors !== false ? 1.0 : 0.0);
+    mat.setFloat('uKeyLightIntensity', props.keyLightIntensity ?? 1.0);
+    mat.setFloat('uFillLightIntensity', props.fillLightIntensity ?? 0.4);
   }
+}
+
+// ── Shadow map helpers ──────────────────────────────────────────────────
+
+function createShadowRT(name: string, scene: Scene): RenderTargetTexture {
+  const rt = new RenderTargetTexture(name, 2048, scene, false, true, Engine.TEXTURETYPE_FLOAT);
+  rt.wrapU = Texture.CLAMP_ADDRESSMODE;
+  rt.wrapV = Texture.CLAMP_ADDRESSMODE;
+  return rt;
+}
+
+function computeLightVP(lightDir: Vector3, target: Vector3, extent: number): Matrix {
+  // Place the "camera" opposite the light direction
+  const lightPos = target.clone().add(lightDir.scale(-extent * 2));
+  const view = Matrix.LookAtLH(lightPos, target, Vector3.Up());
+  const proj = Matrix.OrthoOffCenterLH(-extent, extent, -extent, extent, 0, extent * 4);
+  return view.multiply(proj);
+}
+
+function renderShadowMap(buildResult: BuildResult, rt: RenderTargetTexture, lightVP: Matrix) {
+  // Swap to shadow material, render, restore
+  const mesh = buildResult.shadowMesh;
+  const origMat = mesh.material;
+  mesh.material = buildResult.shadowMat;
+  buildResult.shadowMat.setMatrix('uLightVP', lightVP);
+  // Ensure shadow RT uses the mesh
+  if (!rt.renderList || rt.renderList.indexOf(mesh) < 0) {
+    rt.renderList = [mesh];
+  }
+  rt.render();
+  mesh.material = origMat;
 }
 
 function renderFrame() {
   if (disposed) return;
+  if (!buildResult) { scene.render(); return; }
 
   // Per-segment LOD
-  if (buildResult && segbinData && screenshotLodLock < 0) {
+  if (segbinData && screenshotLodLock < 0) {
     const g = segbinData.geoms;
     const st = segbinData.segType;
     const vpH = engine.getRenderHeight();
@@ -370,10 +446,60 @@ function renderFrame() {
     lastTriCount = triSum;
   }
 
-  // Camera uniforms
-  const camPos = camera.position;
-  for (const m of segbinMeshes) {
-    (m.material as ShaderMaterial).setVector3('uCameraPos', camPos);
+
+  // ── Render shadow maps ──
+  if (shadowRT && buildResult.shadowMat) {
+    const shadowTarget = modelCenter;
+    const shadowExtent = modelExtent * 1.5;
+
+    // Light 1 (key) — Babylon's sunLight.direction points FROM the light
+    // TOWARD the target (light travel direction). For the shader's NdotL we
+    // need the direction TOWARD the light, so we negate.
+    const lightDir1 = sunLight.direction.clone().normalize();
+    const vp1 = computeLightVP(lightDir1, shadowTarget, shadowExtent);
+    renderShadowMap(buildResult, shadowRT, vp1);
+
+    // Light 2 (fill)
+    let vp2: Matrix | null = null;
+    if (shadowRT2 && fillLight) {
+      const lightDir2 = fillLight.direction.clone().normalize();
+      vp2 = computeLightVP(lightDir2, shadowTarget, shadowExtent);
+      renderShadowMap(buildResult, shadowRT2, vp2);
+    }
+
+    // Set uniforms on main materials (key light always set)
+    const camPos = camera.position;
+    const shadowMapSize = new Vector2(2048, 2048);
+    const keyDir = lightDir1.negate(); // toward the light for shader
+    // Fill light direction toward the light (decoupled from shadow map)
+    let fillDir: Vector3 | null = null;
+    if (fillLight) {
+      fillDir = fillLight.direction.clone().negate().normalize();
+    }
+    for (const m of segbinMeshes) {
+      const mat = m.material as ShaderMaterial;
+      mat.setVector3('uCameraPos', camPos);
+      mat.setVector3('uKeyLightDir', keyDir);
+      mat.setTexture('uShadowMap', shadowRT);
+      mat.setMatrix('uShadowMatrix', vp1);
+      mat.setVector2('uShadowMapSize', shadowMapSize);
+      // Fill light — direction always set if fillLight exists, shadow optional
+      if (fillDir) {
+        mat.setVector3('uKeyLightDir2', fillDir);
+      }
+      if (vp2 && fillLight) {
+        mat.setTexture('uShadowMap2', shadowRT2);
+        mat.setMatrix('uShadowMatrix2', vp2);
+        mat.setVector2('uShadowMapSize2', shadowMapSize);
+      }
+    }
+    // Update ground plane shadow uniforms (key light only)
+    if (groundMat) {
+      groundMat.setTexture('uShadowMap', shadowRT);
+      groundMat.setMatrix('uShadowMatrix', vp1);
+      groundMat.setVector2('uShadowMapSize', shadowMapSize);
+      groundMat.setFloat('uShadowSoftness', props.shadowSoftness ?? 2.0);
+    }
   }
 
   scene.render();
@@ -489,6 +615,87 @@ onMounted(() => {
     sunLight = new DirectionalLight('sun', new Vector3(-0.416, 0.25, -0.872), scene);
     sunLight.intensity = 4.0;
 
+    // Second directional light (fill)
+    fillLight = new DirectionalLight('fill', new Vector3(0.5, -0.25, 0.3), scene);
+    fillLight.intensity = 1.0;
+
+    // Ground plane
+    groundMesh = MeshBuilder.CreateGround('ground', { width: 500, height: 500 }, scene);
+    const groundVertSrc = `
+      precision highp float;
+      in vec3 position;
+      uniform mat4 worldViewProjection;
+      uniform mat4 uShadowMatrix;
+      out vec3 vWorldPos;
+      void main() {
+        vWorldPos = position;
+        gl_Position = worldViewProjection * vec4(position, 1.0);
+      }
+    `;
+    const groundFragSrc = `
+      precision highp float;
+      uniform sampler2D uShadowMap;
+      uniform mat4 uShadowMatrix;
+      uniform vec2 uShadowMapSize;
+      uniform float uShadowSoftness;
+      in vec3 vWorldPos;
+      layout(location = 0) out vec4 fragColor;
+
+      float interleavedGradientNoise(vec2 pos) {
+        return fract(52.9829189 * fract(dot(pos, vec2(0.06711056, 0.00583715))));
+      }
+      vec2 vogelDiskSample(int index, int count, float phi) {
+        float goldenAngle = 2.399963229728653;
+        float r = sqrt((float(index) + 0.5) / float(count));
+        float theta = float(index) * goldenAngle + phi;
+        return vec2(cos(theta), sin(theta)) * r;
+      }
+      float shadowFactor() {
+        vec4 p = uShadowMatrix * vec4(vWorldPos, 1.0);
+        p.xyz /= p.w;
+        p.xyz = p.xyz * 0.5 + 0.5;
+        if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0 || p.z < 0.0) return 1.0;
+        float texelSize = 1.0 / uShadowMapSize.x;
+        float radius = texelSize * uShadowSoftness;
+        float phi = interleavedGradientNoise(gl_FragCoord.xy) * 6.283185307;
+        float sum = 0.0;
+        for (int i = 0; i < 8; i++) {
+          vec2 offset = vogelDiskSample(i, 8, phi) * radius;
+          vec2 uv = clamp(p.xy + offset, vec2(0.0), vec2(1.0));
+          float d = texture(uShadowMap, uv).r;
+          sum += (p.z > d) ? 0.0 : 1.0;
+        }
+        return sum / 8.0;
+      }
+      void main() {
+        float sf = shadowFactor();
+        vec3 groundColor = vec3(0.12, 0.12, 0.14);
+        vec3 lit = mix(groundColor * 0.3, groundColor * 1.0, sf);
+        fragColor = vec4(lit, 1.0);
+      }
+    `;
+    const groundMatRef = new ShaderMaterial('groundMat', scene, {
+      vertexSource: groundVertSrc,
+      fragmentSource: groundFragSrc,
+    }, {
+      attributes: ['position'],
+      uniforms: ['worldViewProjection', 'uShadowMatrix', 'uShadowMapSize', 'uShadowSoftness'],
+      samplers: ['uShadowMap'],
+      needAlphaBlending: false,
+    });
+    groundMatRef.backFaceCulling = false;
+    groundMesh.material = groundMatRef;
+    groundMat = groundMatRef;
+    groundMesh.position = new Vector3(0, 0, -10);
+    groundMesh.isPickable = false;
+
+    // SSAO (ambient occlusion) — NOTE: skipped for custom ShaderMaterial meshes
+    // Babylon's SSAO2RenderingPipeline uses an internal depth renderer that
+    // doesn't inherit our custom vertex shader (segment position computation from
+    // instance data). It would compute wrong world positions. A custom SSAO
+    // pass similar to the WebGPU version would be needed for correct results.
+    // For now, the PBR lighting + shadows provide adequate depth cues.
+
     loadEnvMap();
     log(`Setup complete in ${(performance.now() - t0).toFixed(0)}ms`);
 
@@ -534,12 +741,18 @@ onBeforeUnmount(() => {
   resizeObserver?.disconnect();
   if (webgpuRenderer) { webgpuRenderer.dispose(); webgpuRenderer = null; clearInterval(webgpuStatsTimer); return; }
   engine.stopRenderLoop();
+  shadowRT?.dispose();
+  shadowRT2?.dispose();
+  shadowRT = null;
+  shadowRT2 = null;
   taaPipeline?.dispose();
   fxaaProcess?.dispose();
   for (const m of segbinMeshes) {
     m.dispose();
   }
   segbinMeshes = [];
+  groundMesh?.dispose();
+  groundMesh = null;
   scene?.dispose();
   engine?.dispose();
 });

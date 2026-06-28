@@ -229,6 +229,12 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
   uniform sampler2D uShadowMap;
   uniform mat4 uShadowMatrix;
   uniform vec2 uShadowMapSize;
+  // Second directional light
+  uniform vec3 uKeyLightDir2;
+  uniform sampler2D uShadowMap2;
+  uniform mat4 uShadowMatrix2;
+  uniform vec2 uShadowMapSize2;
+  uniform float uShadowSoftness; // PCF radius multiplier
   uniform sampler2D uEnvMapEQ;
   uniform float uEnvMapLOD;
   uniform float uEnvIntensity;
@@ -238,6 +244,9 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
   uniform float uLodMode; // 0=normal, 1=cylinder-integrated
   uniform float uDbgHighlight; // 0=normal, 1=cap highlight
   uniform float uDbgNormVis;   // 0=normal, 1=show N as color
+  uniform float uUseRoleColors; // 0=baseColorTint only, 1=multiply by role color
+  uniform float uKeyLightIntensity;
+  uniform float uFillLightIntensity;
 
   in vec3 vNormal;
   in vec3 vWorldPos;
@@ -271,31 +280,53 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
   }
 
-  const vec2 poissonDisk[16] = vec2[16](
-    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
-    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
-    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
-    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
-    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
-    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
-    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
-    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790)
-  );
+  // ── Vogel disk PCF with receiver-plane depth bias ──
 
-  float shadowFactor(vec3 worldPos, vec3 N, vec3 L) {
-    vec4 p = uShadowMatrix * vec4(worldPos, 1.0);
+  float interleavedGradientNoise(vec2 pos) {
+    return fract(52.9829189 * fract(dot(pos, vec2(0.06711056, 0.00583715))));
+  }
+
+  vec2 vogelDiskSample(int index, int count, float phi) {
+    float goldenAngle = 2.399963229728653;
+    float r = sqrt((float(index) + 0.5) / float(count));
+    float theta = float(index) * goldenAngle + phi;
+    return vec2(cos(theta), sin(theta)) * r;
+  }
+
+  vec2 computeReceiverPlaneDepthBias(vec3 p) {
+    vec3 duvz_dx = dFdx(p);
+    vec3 duvz_dy = dFdy(p);
+    float inv_det = 1.0 / (duvz_dx.x * duvz_dy.y - duvz_dx.y * duvz_dy.x);
+    return vec2(
+      duvz_dy.y * duvz_dx.z - duvz_dx.y * duvz_dy.z,
+      duvz_dx.x * duvz_dy.z - duvz_dy.x * duvz_dx.z
+    ) * inv_det;
+  }
+
+  float shadowFactor(vec3 worldPos, vec3 N, vec3 L,
+                     sampler2D shadowTex, mat4 shadowMatrix, vec2 shadowMapSize) {
+    vec4 p = shadowMatrix * vec4(worldPos, 1.0);
     p.xyz /= p.w;
     p.xyz = p.xyz * 0.5 + 0.5;
     if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0 || p.z > 1.0 || p.z < 0.0) return 1.0;
-    float bias = max(0.0015, 0.003 * (1.0 - dot(N, L)));
-    vec2 ts = 1.0 / uShadowMapSize;
+
+    float bias = max(0.001, 0.002 * (1.0 - dot(N, L)));
+    float texelSize = 1.0 / shadowMapSize.x;
+    float radius = texelSize * uShadowSoftness;
+    float phi = interleavedGradientNoise(gl_FragCoord.xy) * 2.0 * PI;
+    vec2 dz_duv = computeReceiverPlaneDepthBias(p.xyz);
+
     float sum = 0.0;
-    for (int i = 0; i < 16; i++) {
-      vec2 uv = p.xy + poissonDisk[i] * ts * 2.5;
-      float d = texture(uShadowMap, uv).r;
-      sum += (p.z - bias > d) ? 0.0 : 1.0;
+    const int SAMPLES = 8;
+    for (int i = 0; i < SAMPLES; i++) {
+      vec2 offset = vogelDiskSample(i, SAMPLES, phi) * radius;
+      vec2 uv = clamp(p.xy + offset, vec2(0.0), vec2(1.0));
+      float perSampleBias = dot(dz_duv, offset);
+      float refZ = clamp(p.z + perSampleBias, 0.0, 1.0);
+      float d = texture(shadowTex, uv).r;
+      sum += (refZ - bias > d) ? 0.0 : 1.0;
     }
-    return sum / 16.0;
+    return sum / float(SAMPLES);
   }
 
   vec2 dirToEquirect(vec3 dir) {
@@ -341,7 +372,7 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
     float roughness = max(uRoughness, 0.04);
     float alpha2 = roughness * roughness;
 
-    vec3 baseColor = vInstanceColor * uBaseColorTint;
+    vec3 baseColor = mix(uBaseColorTint, vInstanceColor * uBaseColorTint, uUseRoleColors);
     vec3 F0 = mix(vec3(0.04), baseColor, uMetalness);
     vec3 diffuseColor = baseColor * (1.0 - uMetalness);
     float NdotV = max(dot(N, V), 0.001);
@@ -357,7 +388,7 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
       N = normalize(cross(cross(T, V), T));
     }
 
-    // ── Normal per-pixel lighting (LOD 0 / LOD 1 / LOD 2) ───────────
+    // ── Normal per-pixel lighting (LOD 0 / LOD 1 / LOD 2) ──────────────
     {
         vec3 L = normalize(uKeyLightDir);
       vec3 H = normalize(V + L);
@@ -369,13 +400,14 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
       vec3  F = F_Schlick(F0, VdotH) * uSpecularStrength;
       vec3 spec = D * G * F / max(4.0 * NdotL * NdotV, 0.001);
       vec3 kD = (1.0 - F) * (1.0 - uMetalness);
-      float sf = shadowFactor(vWorldPos, N, L);
-      vec3 Li = vec3(1.0);
+      float sf = shadowFactor(vWorldPos, N, L, uShadowMap, uShadowMatrix, uShadowMapSize);
+      vec3 Li = vec3(uKeyLightIntensity);
       Lo += (kD * diffuseColor / PI * orenNayarFactor(N, V, L, roughness) + spec) * Li * NdotL * sf;
     }
 
+    // Second directional light (fill, with shadow)
     {
-      vec3 L = normalize(vec3(-0.5, 0.25, -0.3));
+      vec3 L = normalize(uKeyLightDir2);
       vec3 H = normalize(V + L);
       float NdotL = max(dot(N, L), 0.0);
       float NdotH = max(dot(N, H), 0.0);
@@ -385,8 +417,9 @@ export const SEGMENT_FRAGMENT_SHADER = /* glsl */ `
       vec3  F = F_Schlick(F0, VdotH) * uSpecularStrength;
       vec3 spec = D * G * F / max(4.0 * NdotL * NdotV, 0.001);
       vec3 kD = (1.0 - F) * (1.0 - uMetalness);
-      vec3 Li = vec3(0.6, 0.55, 0.45);
-      Lo += (kD * diffuseColor / PI * orenNayarFactor(N, V, L, roughness) + spec) * Li * NdotL;
+      float sf2 = shadowFactor(vWorldPos, N, L, uShadowMap2, uShadowMatrix2, uShadowMapSize2);
+      vec3 Li = vec3(0.6, 0.55, 0.45) * uFillLightIntensity;
+      Lo += (kD * diffuseColor / PI * orenNayarFactor(N, V, L, roughness) + spec) * Li * NdotL * sf2;
     }
 
     vec3 ambient = vec3(0.0);
@@ -439,4 +472,100 @@ export const DEPTH_FRAGMENT_SHADER = /* glsl */ `
     fragColor = vec4(linear / uCameraFar, 0.0, 0.0, 0.0);
   }
 `;
+
+// ── Shadow map depth: vertex (light POV) ────────────────────────────────
+// Same segment position/tangent computation as SEGMENT_VERTEX_SHADER,
+// but uses uLightVP (light view-projection) and only writes gl_Position.
+export const SHADOW_VERTEX_SHADER = /* glsl */ `
+  precision highp float;
+
+  in vec3 position;
+
+  uniform mat4 uLightVP;
+
+  uniform sampler2D segmentTexture;
+  uniform float uSegmentCount;
+  uniform float uHeightScale;
+  uniform float uAreaCorrection;
+  uniform vec2 uTexSize;
+
+  ivec2 texelCoord(int id, int row) {
+    int idx = id * 4 + row;
+    int w = int(uTexSize.x);
+    return ivec2(idx % w, idx / w);
+  }
+
+  void main() {
+    vec4 row0 = texelFetch(segmentTexture, texelCoord(gl_InstanceID, 0), 0);
+    vec4 row1 = texelFetch(segmentTexture, texelCoord(gl_InstanceID, 1), 0);
+    vec4 row2 = texelFetch(segmentTexture, texelCoord(gl_InstanceID, 2), 0);
+    vec4 row3 = texelFetch(segmentTexture, texelCoord(gl_InstanceID, 3), 0);
+
+    float t = position.z + 0.5;
+
+    vec3 segPos;
+    vec3 endTangent;
+    float width;
+
+    if (row2.z > 0.5) {
+      vec3 p0 = row0.xyz;
+      width    = row0.w;
+      vec3 p1 = row1.xyz;
+      float w = row1.w;
+      vec4 nextRow0 = texelFetch(segmentTexture, texelCoord(gl_InstanceID + 1, 0), 0);
+      vec3 p2 = nextRow0.xyz;
+
+      float mt = 1.0 - t;
+      float denom = mt*mt + 2.0*t*mt*w + t*t;
+      segPos = (mt*mt*p0 + 2.0*t*mt*w*p1 + t*t*p2) / denom;
+
+      float eps = 0.001;
+      float te = min(t + eps, 1.0); float me = 1.0 - te;
+      float de = me*me + 2.0*te*me*w + te*te;
+      vec3 pe = (me*me*p0 + 2.0*te*me*w*p1 + te*te*p2) / de;
+      float ts = max(t - eps, 0.0); float ms = 1.0 - ts;
+      float ds = ms*ms + 2.0*ts*ms*w + ts*ts;
+      vec3 ps = (ms*ms*p0 + 2.0*ts*ms*w*p1 + ts*ts*p2) / ds;
+      endTangent = normalize(pe - ps);
+    } else {
+      vec3 start = row0.xyz;
+      vec3 end   = row1.xyz;
+      width      = row1.w;
+      segPos = mix(start, end, t);
+      vec3 dir = end - start;
+      float len = length(dir);
+      endTangent = len > 0.001 ? dir / len : vec3(0.0, 0.0, 1.0);
+    }
+
+    vec3 chainStartTangent = row3.xyz;
+    vec3 tangent = normalize(mix(chainStartTangent, endTangent, t));
+
+    vec3 upDir   = vec3(0.0, 0.0, 1.0);
+    vec3 rightDir = -normalize(cross(upDir, tangent));
+    if (length(rightDir) < 0.001) {
+      rightDir = vec3(1.0, 0.0, 0.0);
+    }
+    vec3 fwdDir = -normalize(cross(rightDir, upDir));
+    mat3 rot   = mat3(rightDir, upDir, fwdDir);
+
+    vec3 local = vec3(position.x * width * uAreaCorrection, position.y * width * uHeightScale, 0.0);
+    vec3 worldPos = segPos + rot * local;
+
+    gl_Position = uLightVP * vec4(worldPos, 1.0);
+    if (width < 0.001) gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+  }
+`;
+
+// ── Shadow map depth: fragment ───────────────────────────────────────────
+// Writes raw NDC depth to the red channel for manual PCF in the main shader.
+export const SHADOW_FRAGMENT_SHADER = /* glsl */ `
+  precision highp float;
+
+  layout(location = 0) out vec4 fragColor;
+
+  void main() {
+    fragColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+  }
+`;
+
 
