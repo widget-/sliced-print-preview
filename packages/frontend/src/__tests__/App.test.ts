@@ -126,21 +126,7 @@ describe('App', () => {
     vm.debugPreview = 'velocity';
     await wrapper.vm.$nextTick();
 
-    // The ModelViewer stub receives the debugPreview prop
-    // (the stub has props: ['debugPreview'], so it tracks the prop value)
-    const viewer = wrapper.findComponent({ name: 'MockModelViewer' }) ||
-                   wrapper.findComponent({ name: 'ModelViewer' });
-
-    // Direct prop check on the parent's passed props:
-    // The ModelViewer component instance (even stubbed) receives props
-    // Access the stub's props via findComponent
-    const mvComp = wrapper.getComponent('.mock-model-viewer') as any;
-    // vue-test-utils might expose props differently for stubs
-    // Let's check the rendered output instead: the :debugPreview binding
-    // is on the template <ModelViewer :debugPreview="debugPreview" ... />
-    // For a stub, we can check what props it received
-    
-    // Verify by checking App vm debugPreview is set
+    // Verify App state is correct
     expect(vm.debugPreview).toBe('velocity');
 
     // Switch renderer to WebGL2

@@ -640,13 +640,24 @@ function renderFrame() {
     shadowMesh.material = buildResult.shadowMat;
     buildResult.shadowMat.setMatrix('uLightVP', viewProj);
     gl.bindFramebuffer(gl.FRAMEBUFFER, taaDepthFB!);
+    const fbStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (fbStatus !== gl.FRAMEBUFFER_COMPLETE) {
+      console.warn('[TAA] depth FB incomplete:', fbStatus);
+    }
     gl.viewport(0, 0, w, h);
+    gl.clearDepth(1.0);
     gl.clear(gl.DEPTH_BUFFER_BIT | gl.COLOR_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LESS);
     // Render the shadow mesh using Babylon's rendering (needs subMesh parameter)
+    console.log('[TAA] shadowMesh subMeshes:', shadowMesh.subMeshes?.length, 'hasThinInstances:', shadowMesh.hasThinInstances);
     for (let si = 0; si < shadowMesh.subMeshes.length; si++) {
       shadowMesh.render(shadowMesh.subMeshes[si], false);
     }
     shadowMesh.material = origShadowMat;
+    // Reset WebGL state for main render
+    gl.disable(gl.DEPTH_TEST);
+    gl.clearDepth(1.0);
     // Reset Babylon's FB tracking to prevent feedback during main render
     (engine as any)._currentRenderTarget = null;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -666,6 +677,9 @@ function renderFrame() {
     const actualPrevVP = taaFrame === 0 ? viewProj : prevViewProj;
 
     // 6. TAA blend: readTex + histTex + depthTex → swapchain
+    // For depth debug, bind the color texture (frag shader writes gl_FragCoord.z there)
+    // instead of the hardware depth to verify geometry renders
+    const depthSrcTex = isDepthVis ? taaDepthColorTex : taaDepthTex;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, w, h);
     gl.disable(gl.DEPTH_TEST);
