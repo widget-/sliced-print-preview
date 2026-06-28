@@ -12,6 +12,8 @@ import capVertSrc from './shaders/cap.vert?raw';
 import pbrFragSrc from './shaders/pbr.frag?raw';
 import shadowVertSrc from './shaders/shadow.vert?raw';
 import shadowFragSrc from './shaders/shadow.frag?raw';
+import groundVertSrc from './shaders/ground.vert?raw';
+import groundFragSrc from './shaders/ground.frag?raw';
 
 export interface MaterialUniforms {
   roughness: number;
@@ -80,6 +82,27 @@ export class WebGLPipeline {
   shadowFBO!: WebGLFramebuffer;
   shadowTex!: WebGLTexture;
   shadowSize = 1024;
+  // Second light shadow
+  shadowFBO2!: WebGLFramebuffer;
+  shadowTex2!: WebGLTexture;
+  u_shadowTex2!: WebGLUniformLocation;
+  u_shadowVP2!: WebGLUniformLocation;
+  u_cap_shadowTex2!: WebGLUniformLocation;
+  u_cap_shadowVP2!: WebGLUniformLocation;
+
+  // ── Ground plane ──
+  groundVB!: WebGLBuffer;
+  groundIB!: WebGLBuffer;
+  groundProgram!: WebGLProgram;
+  groundVAO: WebGLVertexArrayObject | null = null;
+  u_ground_shadowTex!: WebGLUniformLocation;
+  u_ground_shadowVP!: WebGLUniformLocation;
+  u_ground_shadowTex2!: WebGLUniformLocation;
+  u_ground_shadowVP2!: WebGLUniformLocation;
+  u_ground_shadowSoftness!: WebGLUniformLocation;
+  u_ground_lightDir!: WebGLUniformLocation;
+  u_ground_lightDir2!: WebGLUniformLocation;
+  private _groundZ = -3;
 
   // ── Environment map ──
   envTex: WebGLTexture | null = null;
@@ -103,6 +126,10 @@ export class WebGLPipeline {
     useRoleColors: 1,
   };
   lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
+  lightDir2: [number, number, number, number] = [-0.5, -0.3, 0.6, 0.4];
+  lightDir2UBO!: WebGLBuffer;
+  u_lightDir2!: WebGLUniformLocation;
+  u_cap_lightDir2!: WebGLUniformLocation;
   shadowSoftness = 2.0;
 
   // ── Model bounds for shadow VP ──
@@ -165,6 +192,24 @@ export class WebGLPipeline {
     gl.bindBuffer(gl.ARRAY_BUFFER, null);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
 
+    // ── Ground plane geometry (4 vertices, 2 triangles) ──
+    const GROUND_SIZE = 250;
+    const groundVerts = new Float32Array([
+      -GROUND_SIZE, -GROUND_SIZE, this._groundZ,
+       GROUND_SIZE, -GROUND_SIZE, this._groundZ,
+       GROUND_SIZE,  GROUND_SIZE, this._groundZ,
+      -GROUND_SIZE,  GROUND_SIZE, this._groundZ,
+    ]);
+    const groundIndices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    this.groundVB = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.groundVB);
+    gl.bufferData(gl.ARRAY_BUFFER, groundVerts, gl.STATIC_DRAW);
+    this.groundIB = gl.createBuffer()!;
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.groundIB);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, groundIndices, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
     // ── Instance buffers ──
     for (let lod = 0; lod < 3; lod++) {
       const buf = gl.createBuffer()!;
@@ -180,6 +225,7 @@ export class WebGLPipeline {
     this.bodyProgram = buildProgram(gl, bodyVertSrc, pbrFragSrc);
     this.capProgram = buildProgram(gl, capVertSrc, pbrFragSrc);
     this.shadowProgram = buildProgram(gl, shadowVertSrc, shadowFragSrc);
+    this.groundProgram = buildProgram(gl, groundVertSrc, groundFragSrc);
 
     // ── Set uniform block bindings ──
     for (const prog of [this.bodyProgram, this.capProgram]) {
@@ -200,6 +246,9 @@ export class WebGLPipeline {
     this.u_shadowVP = gl.getUniformLocation(bp, 'shadowVP')!;
     this.u_shadowSoftness = gl.getUniformLocation(bp, 'shadowSoftness')!;
     this.u_envTex = gl.getUniformLocation(bp, 'envTex')!;
+    this.u_lightDir2 = gl.getUniformLocation(bp, 'lightDir2')!;
+    this.u_shadowTex2 = gl.getUniformLocation(bp, 'shadowTex2')!;
+    this.u_shadowVP2 = gl.getUniformLocation(bp, 'shadowVP2')!;
     console.log(`[WebGL] Body program uniforms — lightDir:${!!this.u_lightDir} shadowTex:${!!this.u_shadowTex} shadowSoftness:${!!this.u_shadowSoftness} envTex:${!!this.u_envTex}`);
 
     const cp = this.capProgram;
@@ -211,11 +260,24 @@ export class WebGLPipeline {
     this.u_cap_shadowVP = gl.getUniformLocation(cp, 'shadowVP')!;
     this.u_cap_shadowSoftness = gl.getUniformLocation(cp, 'shadowSoftness')!;
     this.u_cap_envTex = gl.getUniformLocation(cp, 'envTex')!;
+    this.u_cap_lightDir2 = gl.getUniformLocation(cp, 'lightDir2')!;
+    this.u_cap_shadowTex2 = gl.getUniformLocation(cp, 'shadowTex2')!;
+    this.u_cap_shadowVP2 = gl.getUniformLocation(cp, 'shadowVP2')!;
 
     const sp = this.shadowProgram;
     this.u_shadow_shadowVP = gl.getUniformLocation(sp, 'shadowVP')!;
     this.u_shadow_segTex = gl.getUniformLocation(sp, 'segTex')!;
     this.u_shadow_texWidth = gl.getUniformLocation(sp, 'texWidth')!;
+
+    // ── Ground program uniform locations ──
+    const gp = this.groundProgram;
+    this.u_ground_lightDir = gl.getUniformLocation(gp, 'lightDir')!;
+    this.u_ground_lightDir2 = gl.getUniformLocation(gp, 'lightDir2')!;
+    this.u_ground_shadowTex = gl.getUniformLocation(gp, 'shadowTex')!;
+    this.u_ground_shadowVP = gl.getUniformLocation(gp, 'shadowVP')!;
+    this.u_ground_shadowTex2 = gl.getUniformLocation(gp, 'shadowTex2')!;
+    this.u_ground_shadowVP2 = gl.getUniformLocation(gp, 'shadowVP2')!;
+    this.u_ground_shadowSoftness = gl.getUniformLocation(gp, 'shadowSoftness')!;
 
     // ── Uniform buffers (allocate once, update with bufferSubData) ──
     this.cameraUBO = gl.createBuffer()!;
@@ -228,6 +290,10 @@ export class WebGLPipeline {
 
     this.lightDirUBO = gl.createBuffer()!;
     gl.bindBuffer(gl.UNIFORM_BUFFER, this.lightDirUBO);
+    gl.bufferData(gl.UNIFORM_BUFFER, new Float32Array(4), gl.DYNAMIC_DRAW); // 16 bytes
+
+    this.lightDir2UBO = gl.createBuffer()!;
+    gl.bindBuffer(gl.UNIFORM_BUFFER, this.lightDir2UBO);
     gl.bufferData(gl.UNIFORM_BUFFER, new Float32Array(4), gl.DYNAMIC_DRAW); // 16 bytes
     gl.bindBuffer(gl.UNIFORM_BUFFER, null);
 
@@ -249,9 +315,28 @@ export class WebGLPipeline {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
+    // ── Second shadow map (fill light) ──
+    this.shadowTex2 = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex2);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, this.shadowSize, this.shadowSize, 0,
+      gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.COMPARE_REF_TO_TEXTURE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_FUNC, gl.LEQUAL);
+
+    this.shadowFBO2 = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFBO2);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, this.shadowTex2, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+
     // ── Write initial material UBO ──
     this.writeMaterialUBO();
     this.writeLightDirUBO();
+    this.writeLightDir2UBO();
   }
 
   setSegments(segTexs: SegmentTextures, data: SegbinData) {
@@ -270,60 +355,82 @@ export class WebGLPipeline {
     this._modelRadius = Math.max(rx, ry, rz);
   }
 
-  /** Compute shadow view-projection matrix from light direction. */
+  /** Compute shadow view-projection matrix from light direction.
+   *  Projects 8 model bounding-box corners into light-view space,
+   *  fits an orthographic projection tightly around them, pads for PCF. */
   computeShadowVP(lx: number, ly: number, lz: number): Float32Array {
     const [cx, cy, cz] = this._modelCenter;
-    const r = this._modelRadius * 1.5;
+    const r = this._modelRadius;
+    // Place light far enough away to cover the whole scene
+    const shadowDist = r * 5;
+    const ll = Math.sqrt(lx * lx + ly * ly + lz * lz);
+    const ldx = lx / ll, ldy = ly / ll, ldz = lz / ll;
 
-    // Light position: center - lightDir * radius
-    const lp = [cx - lx * r, cy - ly * r, cz - lz * r];
+    // Light position
+    const px = cx - ldx * shadowDist;
+    const py = cy - ldy * shadowDist;
+    const pz = cz - ldz * shadowDist;
 
-    // View matrix: lookAt(lp, center, up=Z)
-    const fwd = [cx - lp[0], cy - lp[1], cz - lp[2]];
-    const fwdLen = Math.sqrt(fwd[0] ** 2 + fwd[1] ** 2 + fwd[2] ** 2);
-    fwd[0] /= fwdLen; fwd[1] /= fwdLen; fwd[2] /= fwdLen;
-
-    const right = [fwd[1], -fwd[0], 0];
-    const rightLen = Math.sqrt(right[0] ** 2 + right[1] ** 2);
-    if (rightLen > 0.001) { right[0] /= rightLen; right[1] /= rightLen; }
-    else { right[0] = 1; right[1] = 0; }
-
-    const up = [
-      right[1] * fwd[2] - right[2] * fwd[1],
-      right[2] * fwd[0] - right[0] * fwd[2],
-      right[0] * fwd[1] - right[1] * fwd[0],
-    ];
+    // View matrix: lookAt(lightPos, modelCenter, Z-up)
+    let fx = cx - px, fy = cy - py, fz = cz - pz;
+    const fLen = Math.sqrt(fx * fx + fy * fy + fz * fz);
+    fx /= fLen; fy /= fLen; fz /= fLen;
+    let rx = fy, ry = -fx, rz = 0;
+    const rLen = Math.sqrt(rx * rx + ry * ry);
+    if (rLen > 0.001) { rx /= rLen; ry /= rLen; } else { rx = 1; ry = 0; }
+    const ux = ry * fz - rz * fy, uy = rz * fx - rx * fz, uz = rx * fy - ry * fx;
 
     // Column-major view matrix
-    const view = new Float32Array(16);
-    view[0] = right[0]; view[1] = up[0]; view[2] = -fwd[0]; view[3] = 0;
-    view[4] = right[1]; view[5] = up[1]; view[6] = -fwd[1]; view[7] = 0;
-    view[8] = right[2]; view[9] = up[2]; view[10] = -fwd[2]; view[11] = 0;
-    view[12] = -(right[0] * lp[0] + right[1] * lp[1] + right[2] * lp[2]);
-    view[13] = -(up[0] * lp[0] + up[1] * lp[1] + up[2] * lp[2]);
-    view[14] = fwd[0] * lp[0] + fwd[1] * lp[1] + fwd[2] * lp[2];
-    view[15] = 1;
+    const v = new Float32Array(16);
+    v[0] = rx; v[4] = ux; v[8] = -fx; v[12] = -(rx * px + ry * py + rz * pz);
+    v[1] = ry; v[5] = uy; v[9] = -fy; v[13] = -(ux * px + uy * py + uz * pz);
+    v[2] = rz; v[6] = uz; v[10] = -fz; v[14] = fx * px + fy * py + fz * pz;
+    v[3] = 0; v[7] = 0; v[11] = 0; v[15] = 1;
 
-    // Orthographic projection (column-major)
-    const proj = new Float32Array(16);
-    const s = r;
-    proj[0] = 1 / s; proj[1] = 0; proj[2] = 0; proj[3] = 0;
-    proj[4] = 0; proj[5] = 1 / s; proj[6] = 0; proj[7] = 0;
-    proj[8] = 0; proj[9] = 0; proj[10] = -2 / (r * 4); proj[11] = 0;
-    proj[12] = 0; proj[13] = 0; proj[14] = 0; proj[15] = 1;
-
-    // Multiply: shadowVP = proj × view
-    const vp = new Float32Array(16);
-    for (let col = 0; col < 4; col++) {
-      for (let row = 0; row < 4; row++) {
-        vp[col * 4 + row] =
-          proj[row] * view[col * 4] +
-          proj[4 + row] * view[col * 4 + 1] +
-          proj[8 + row] * view[col * 4 + 2] +
-          proj[12 + row] * view[col * 4 + 3];
+    // Project 8 bounding-box corners into light-view space
+    let lmnX = Infinity, lmxX = -Infinity, lmnY = Infinity, lmxY = -Infinity;
+    let lmnZ = Infinity, lmxZ = -Infinity;
+    for (const sx of [cx - r, cx + r]) {
+      for (const sy of [cy - r, cy + r]) {
+        for (const sz of [cz - r, cz + r]) {
+          const x = v[0] * sx + v[4] * sy + v[8] * sz + v[12];
+          const y = v[1] * sx + v[5] * sy + v[9] * sz + v[13];
+          const z = v[2] * sx + v[6] * sy + v[10] * sz + v[14];
+          if (x < lmnX) lmnX = x; if (x > lmxX) lmxX = x;
+          if (y < lmnY) lmnY = y; if (y > lmxY) lmxY = y;
+          if (z < lmnZ) lmnZ = z; if (z > lmxZ) lmxZ = z;
+        }
       }
     }
-    return vp;
+    // Ensure Z range includes 0 (so the light itself isn't clipped)
+    if (lmnZ > 0) lmnZ = 0;
+    if (lmxZ < 0) lmxZ = 0;
+
+    // Pad extents for PCF filter margin + stability
+    const pad = 4.0;
+    const hlw = Math.max(Math.abs(lmnX), Math.abs(lmxX)) * pad;
+    const hlh = Math.max(Math.abs(lmnY), Math.abs(lmxY)) * pad;
+    const zn = lmnZ - 0.5, zf = lmxZ + 0.5, dr = zf - zn;
+
+    // Orthographic projection (column-major, maps Z [zn,zf] → NDC [0,1] for shader comparison)
+    const p = new Float32Array(16);
+    p[0] = 1 / hlw; p[4] = 0; p[8] = 0; p[12] = 0;
+    p[1] = 0; p[5] = 1 / hlh; p[9] = 0; p[13] = 0;
+    p[2] = 0; p[6] = 0; p[10] = 1 / dr; p[14] = -zn / dr;
+    p[3] = 0; p[7] = 0; p[11] = 0; p[15] = 1;
+
+    // Multiply: shadowVP = proj × view
+    const svp = new Float32Array(16);
+    for (let col = 0; col < 4; col++) {
+      for (let row = 0; row < 4; row++) {
+        svp[col * 4 + row] =
+          p[row] * v[col * 4] +
+          p[4 + row] * v[col * 4 + 1] +
+          p[8 + row] * v[col * 4 + 2] +
+          p[12 + row] * v[col * 4 + 3];
+      }
+    }
+    return svp;
   }
 
   writeCameraUBO(camera: OrbitCamera) {
@@ -391,6 +498,19 @@ export class WebGLPipeline {
     data[3] = this.lightDir[3];
 
     gl.bindBuffer(gl.UNIFORM_BUFFER, this.lightDirUBO);
+    gl.bufferSubData(gl.UNIFORM_BUFFER, 0, data);
+    gl.bindBuffer(gl.UNIFORM_BUFFER, null);
+  }
+
+  writeLightDir2UBO() {
+    const gl = this.gl;
+    const data = new Float32Array(4);
+    data[0] = this.lightDir2[0];
+    data[1] = this.lightDir2[1];
+    data[2] = this.lightDir2[2];
+    data[3] = this.lightDir2[3];
+
+    gl.bindBuffer(gl.UNIFORM_BUFFER, this.lightDir2UBO);
     gl.bufferSubData(gl.UNIFORM_BUFFER, 0, data);
     gl.bindBuffer(gl.UNIFORM_BUFFER, null);
   }
@@ -494,6 +614,44 @@ export class WebGLPipeline {
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
+  /** Render shadow map for fill light. */
+  renderShadowMap2(camera: OrbitCamera, canvasWidth: number, canvasHeight: number) {
+    if (!this.segmentTextures) return;
+    const gl = this.gl;
+    const { segTex, texWidth } = this.segmentTextures;
+
+    const [lod0, lod1, _lod2] = evaluateLOD(this.segbinData, camera, canvasWidth, canvasHeight);
+
+    const shadowVP = this.computeShadowVP(this.lightDir2[0], this.lightDir2[1], this.lightDir2[2]);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.shadowFBO2);
+    gl.viewport(0, 0, this.shadowSize, this.shadowSize);
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
+
+    gl.useProgram(this.shadowProgram);
+    gl.uniformMatrix4fv(this.u_shadow_shadowVP, false, shadowVP);
+    gl.uniform1i(this.u_shadow_segTex, 0);
+    gl.uniform1i(this.u_shadow_texWidth, texWidth);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, segTex);
+
+    for (let lod = 0; lod < 2; lod++) {
+      const indices = lod === 0 ? lod0 : lod1;
+      if (indices.length === 0) continue;
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.lodInstanceBufs[lod]);
+      gl.bufferData(gl.ARRAY_BUFFER, indices, gl.DYNAMIC_DRAW);
+
+      this._bindShadowVAO(lod, this.lodInstanceBufs[lod]);
+      gl.drawElementsInstanced(gl.TRIANGLES, this.bodyIC[lod], gl.UNSIGNED_SHORT, 0, indices.length);
+    }
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   /** Render body segments (all 3 LOD levels) to the current FBO. */
   drawBody(camera: OrbitCamera, canvas: HTMLCanvasElement) {
     const gl = this.gl;
@@ -507,13 +665,16 @@ export class WebGLPipeline {
     this._bindUBO(0, this.cameraUBO);
     this._bindUBO(1, this.materialUBO);
 
-    // Set uniforms
+    // Set uniforms (body + two lights)
     gl.uniform4f(this.u_lightDir, this.lightDir[0], this.lightDir[1], this.lightDir[2], this.lightDir[3]);
+    gl.uniform4f(this.u_lightDir2, this.lightDir2[0], this.lightDir2[1], this.lightDir2[2], this.lightDir2[3]);
     gl.uniform1i(this.u_segTex, 0);
     gl.uniform1i(this.u_colorTex, 1);
     gl.uniform1i(this.u_texWidth, texWidth);
     gl.uniform1i(this.u_shadowTex, 2);
     gl.uniformMatrix4fv(this.u_shadowVP, false, this.computeShadowVP(this.lightDir[0], this.lightDir[1], this.lightDir[2]));
+    gl.uniform1i(this.u_shadowTex2, 4);
+    gl.uniformMatrix4fv(this.u_shadowVP2, false, this.computeShadowVP(this.lightDir2[0], this.lightDir2[1], this.lightDir2[2]));
     gl.uniform1f(this.u_shadowSoftness, this.shadowSoftness);
     gl.uniform1i(this.u_envTex, 3);
 
@@ -526,6 +687,8 @@ export class WebGLPipeline {
     gl.bindTexture(gl.TEXTURE_2D, this.shadowTex);
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.envTex);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex2);
 
     for (let lod = 0; lod < 3; lod++) {
       const count = lod === 0 ? counts.lod0 : lod === 1 ? counts.lod1 : counts.lod2;
@@ -544,6 +707,8 @@ export class WebGLPipeline {
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   }
 
   /** Render endcaps to the current FBO. */
@@ -558,13 +723,16 @@ export class WebGLPipeline {
     this._bindUBO(0, this.cameraUBO);
     this._bindUBO(1, this.materialUBO);
 
-    // Set uniforms
+    // Set uniforms (caps + two lights)
     gl.uniform4f(this.u_cap_lightDir, this.lightDir[0], this.lightDir[1], this.lightDir[2], this.lightDir[3]);
+    gl.uniform4f(this.u_cap_lightDir2, this.lightDir2[0], this.lightDir2[1], this.lightDir2[2], this.lightDir2[3]);
     gl.uniform1i(this.u_cap_segTex, 0);
     gl.uniform1i(this.u_cap_colorTex, 1);
     gl.uniform1i(this.u_cap_texWidth, texWidth);
     gl.uniform1i(this.u_cap_shadowTex, 2);
     gl.uniformMatrix4fv(this.u_cap_shadowVP, false, this.computeShadowVP(this.lightDir[0], this.lightDir[1], this.lightDir[2]));
+    gl.uniform1i(this.u_cap_shadowTex2, 4);
+    gl.uniformMatrix4fv(this.u_cap_shadowVP2, false, this.computeShadowVP(this.lightDir2[0], this.lightDir2[1], this.lightDir2[2]));
     gl.uniform1f(this.u_cap_shadowSoftness, this.shadowSoftness);
     gl.uniform1i(this.u_cap_envTex, 3);
 
@@ -576,6 +744,8 @@ export class WebGLPipeline {
     gl.bindTexture(gl.TEXTURE_2D, this.shadowTex);
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, this.envTex);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex2);
 
     for (let lod = 0; lod < 2; lod++) {
       this._bindCapVAO(lod);
@@ -590,6 +760,73 @@ export class WebGLPipeline {
     gl.bindTexture(gl.TEXTURE_2D, null);
     gl.activeTexture(gl.TEXTURE3);
     gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE4);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /** Render infinite ground plane. */
+  drawGround() {
+    const gl = this.gl;
+    gl.useProgram(this.groundProgram);
+
+    // Bind UBOs (Camera + Material)
+    this._bindUBO(0, this.cameraUBO);
+    this._bindUBO(1, this.materialUBO);
+
+    // Set uniforms
+    gl.uniform4f(this.u_ground_lightDir, this.lightDir[0], this.lightDir[1], this.lightDir[2], this.lightDir[3]);
+    gl.uniform4f(this.u_ground_lightDir2, this.lightDir2[0], this.lightDir2[1], this.lightDir2[2], this.lightDir2[3]);
+    gl.uniform1i(this.u_ground_shadowTex, 0);
+    gl.uniformMatrix4fv(this.u_ground_shadowVP, false, this.computeShadowVP(this.lightDir[0], this.lightDir[1], this.lightDir[2]));
+    gl.uniform1i(this.u_ground_shadowTex2, 1);
+    gl.uniformMatrix4fv(this.u_ground_shadowVP2, false, this.computeShadowVP(this.lightDir2[0], this.lightDir2[1], this.lightDir2[2]));
+    gl.uniform1f(this.u_ground_shadowSoftness, this.shadowSoftness);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.shadowTex2);
+
+    // VAO for ground
+    if (!this.groundVAO) {
+      const vao = gl.createVertexArray()!;
+      gl.bindVertexArray(vao);
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.groundVB);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 12, 0);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.groundIB);
+      gl.bindVertexArray(null);
+      this.groundVAO = vao;
+    }
+    gl.bindVertexArray(this.groundVAO);
+
+    // Back-face culling for ground (only visible from above)
+    gl.enable(gl.CULL_FACE);
+    gl.cullFace(gl.BACK);
+    gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
+    gl.disable(gl.CULL_FACE);
+
+    gl.bindVertexArray(null);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  }
+
+  /** Update ground plane Z position. */
+  setGroundZ(z: number) {
+    this._groundZ = z;
+    const gl = this.gl;
+    const GROUND_SIZE = 250;
+    const verts = new Float32Array([
+      -GROUND_SIZE, -GROUND_SIZE, z,
+       GROUND_SIZE, -GROUND_SIZE, z,
+       GROUND_SIZE,  GROUND_SIZE, z,
+      -GROUND_SIZE,  GROUND_SIZE, z,
+    ]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.groundVB);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, verts);
+    gl.bindBuffer(gl.ARRAY_BUFFER, null);
   }
 
   // ── VAO helpers ──
@@ -696,8 +933,15 @@ export class WebGLPipeline {
     gl.deleteBuffer(this.cameraUBO);
     gl.deleteBuffer(this.materialUBO);
     gl.deleteBuffer(this.lightDirUBO);
+    gl.deleteBuffer(this.lightDir2UBO);
     gl.deleteFramebuffer(this.shadowFBO);
     gl.deleteTexture(this.shadowTex);
+    gl.deleteFramebuffer(this.shadowFBO2);
+    gl.deleteTexture(this.shadowTex2);
+    gl.deleteProgram(this.groundProgram);
+    gl.deleteBuffer(this.groundVB);
+    gl.deleteBuffer(this.groundIB);
+    if (this.groundVAO) gl.deleteVertexArray(this.groundVAO);
     if (this.envTex) gl.deleteTexture(this.envTex);
     if (this.segmentTextures) {
       gl.deleteTexture(this.segmentTextures.segTex);

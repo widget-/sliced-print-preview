@@ -102,6 +102,9 @@ export class WebGLRenderer implements Renderer {
     const maxDim = Math.max(maxX - minX, maxY - minY, maxZ - minZ) / 2;
     this.pipeline.setModelBounds(cx, cy, cz, maxDim, maxDim, maxDim);
 
+    // Place ground just below the model
+    this.pipeline.setGroundZ(minZ - 0.5);
+
     this._startLoop();
     return Math.round(performance.now() - t0);
   }
@@ -123,7 +126,7 @@ export class WebGLRenderer implements Renderer {
 
   setShadowSoftness(v: number) { this.pipeline.shadowSoftness = v; this._startLoop(); }
   setKeyLightIntensity(v: number) { this.pipeline.lightDir[3] = v; this.pipeline.writeLightDirUBO(); this._startLoop(); }
-  setFillLightIntensity(_v: number) { /* single-light fallback — ignored */ }
+  setFillLightIntensity(v: number) { this.pipeline.lightDir2[3] = v; this.pipeline.writeLightDir2UBO(); this._startLoop(); }
   setContactShadowDist(_v: number) { /* unsupported */ }
   setContactShadowStrength(_v: number) { /* unsupported */ }
   setSSAOIntensity(_v: number) { /* unsupported */ }
@@ -203,6 +206,9 @@ export class WebGLRenderer implements Renderer {
       gl.depthMask(true);
       this.pipeline.renderShadowMap(this.camera, w, h);
 
+      // 1b. Second light shadow pass
+      this.pipeline.renderShadowMap2(this.camera, w, h);
+
       // 2. Main pass (direct to canvas)
       gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       gl.viewport(0, 0, w, h);
@@ -214,6 +220,7 @@ export class WebGLRenderer implements Renderer {
 
       this.pipeline.drawBody(this.camera, canvas);
       this.pipeline.drawCaps();
+      this.pipeline.drawGround();
     }
 
     // FPS tracking

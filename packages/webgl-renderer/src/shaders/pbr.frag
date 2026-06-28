@@ -32,10 +32,13 @@ layout(std140) uniform Material {
 };
 
 uniform vec4 lightDir;               // xyz=direction, w=intensity
+uniform vec4 lightDir2;              // fill light direction + intensity
 
 // Shadow
 uniform sampler2DShadow shadowTex;
 uniform mat4 shadowVP;
+uniform sampler2DShadow shadowTex2;
+uniform mat4 shadowVP2;
 uniform float shadowSoftness;         // PCF kernel radius in texels
 
 // Environment map (equirectangular)
@@ -45,11 +48,11 @@ uniform sampler2D envTex;
 const float PI = 3.14159265359;
 const int   PCF_SAMPLES = 8;
 
-// ── PCF shadow (simple Poisson disk) ──
-float computeShadow(vec3 worldPos) {
-    vec4 shadowClip = shadowVP * vec4(worldPos, 1.0);
+// ── PCF shadow (8-tap Poisson disk, parameterized for dual lights) ──
+float computeShadow(sampler2DShadow tex, mat4 vp, vec3 worldPos) {
+    vec4 shadowClip = vp * vec4(worldPos, 1.0);
     vec3 shadowNDC = shadowClip.xyz / shadowClip.w;
-    vec2 shadowUV = shadowNDC.xy * vec2(0.5, -0.5) + 0.5;
+    vec2 shadowUV = shadowNDC.xy * 0.5 + 0.5;
 
     if (shadowUV != clamp(shadowUV, vec2(0.0), vec2(1.0)) ||
         shadowNDC.z < 0.0 || shadowNDC.z > 1.0) {
@@ -63,7 +66,6 @@ float computeShadow(vec3 worldPos) {
     float phi = fract(sin(dot(vClipPos.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.283185307;
 
     float sum = 0.0;
-    // Simple Poisson-like disk (8 samples)
     vec2 offsets[8];
     offsets[0] = vec2( 0.3109,  0.2007);
     offsets[1] = vec2(-0.2234, -0.3367);
@@ -79,7 +81,7 @@ float computeShadow(vec3 worldPos) {
         float s = sin(phi);
         float c = cos(phi);
         vec2 rotOff = vec2(off.x * c - off.y * s, off.x * s + off.y * c);
-        sum += texture(shadowTex, vec3(shadowUV + rotOff, shadowNDC.z));
+        sum += texture(tex, vec3(shadowUV + rotOff, shadowNDC.z));
     }
     return sum / float(PCF_SAMPLES);
 }
@@ -136,10 +138,13 @@ void main() {
     float alpha2 = alpha * alpha;
     vec3 kD = (1.0 - F0) * (1.0 - metalness);
 
-    // ── Direct light (single directional) ──
-    vec3 L = normalize(lightDir.xyz);
-    float shadowVis = computeShadow(vWorldPos);
-    vec3 direct = evalLight(N, V, L, F0, alpha2, kD, baseColor, lightDir.w, shadowVis);
+    // ── Direct light (two directional lights) ──
+    vec3 L1 = normalize(lightDir.xyz);
+    vec3 L2 = normalize(lightDir2.xyz);
+    float shadowVis1 = computeShadow(shadowTex, shadowVP, vWorldPos);
+    float shadowVis2 = computeShadow(shadowTex2, shadowVP2, vWorldPos);
+    vec3 direct = evalLight(N, V, L1, F0, alpha2, kD, baseColor, lightDir.w, shadowVis1)
+                + evalLight(N, V, L2, F0, alpha2, kD, baseColor, lightDir2.w, shadowVis2);
 
     // ── Ambient (hemisphere + env map) ──
     vec3 ambientUp = vec3(0.6, 0.65, 0.75);
