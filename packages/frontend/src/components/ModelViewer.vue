@@ -28,6 +28,7 @@ const props = withDefaults(defineProps<{
   contactShadowStrength?: number;
   ssaoIntensity?: number;
   ssaoRadius?: number;
+  arcCurvature?: number;
   /** Debug preview mode for WebGPU renderer. */
   debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'shadow2' | 'velocity' | 'composite-taa' | 'blur-temp' | 'brdf-lut' | 'prefilter-up' | 'prefilter-fwd' | 'prefilter-down' | 'source-up' | 'source-fwd' | 'source-down' | 'worldpos';
   envMapUrl?: string;
@@ -45,8 +46,9 @@ const props = withDefaults(defineProps<{
   fillLightIntensity: 0.4,
   contactShadowDist: 0.05,
   contactShadowStrength: 0.5,
-  ssaoIntensity: 3.0,
-  ssaoRadius: 0.06,
+  ssaoIntensity: 0.5,
+  ssaoRadius: 0.5,
+  arcCurvature: 1.0,
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
 
@@ -70,7 +72,17 @@ function onMaterialChange() {
     specularStrength: props.specularStrength,
     ambientStrength: props.ambientStrength,
     baseColorTint: props.baseColorTint,
+    ssaoIntensity: props.ssaoIntensity,
+    ssaoRadius: props.ssaoRadius,
+    arcCurvature: props.arcCurvature,
   });
+  renderer.setSSAOIntensity?.(props.ssaoIntensity);
+  renderer.setSSAORadius?.(props.ssaoRadius);
+  renderer.setArcCurvature?.(props.arcCurvature);
+  renderer.setShadowSoftness?.(props.shadowSoftness);
+  renderer.setKeyLightIntensity?.(props.keyLightIntensity);
+  renderer.setFillLightIntensity?.(props.fillLightIntensity);
+  if (renderer.ssaoEnabled !== undefined) renderer.ssaoEnabled = props.ssaoEnabled;
 }
 
 watch(() => [
@@ -78,6 +90,7 @@ watch(() => [
   props.ambientStrength, props.baseColorTint, props.ssaoEnabled, props.roleColors,
   props.shadowSoftness, props.keyLightIntensity, props.fillLightIntensity,
   props.contactShadowDist, props.contactShadowStrength, props.ssaoIntensity, props.ssaoRadius,
+  props.arcCurvature,
 ], onMaterialChange);
 
 // ── Debug preview ──

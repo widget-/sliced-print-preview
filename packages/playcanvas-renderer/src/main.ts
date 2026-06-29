@@ -157,6 +157,7 @@ attribute vec4 instance_line4;
 
 uniform mat4 matrix_viewProjection;
 uniform mat4 matrix_view;
+uniform float uArcCurvature;
 
 varying vec3 vWorldPos;
 varying vec3 vWorldNormal;
@@ -199,7 +200,7 @@ void main() {
     vec3 p0 = startPos;
     vec3 p1 = endPos;
     vec3 p2 = nextStartPos;
-    float w = arcWeight;
+    float w = arcWeight * uArcCurvature;
     float mt = 1.0 - t;
     float mt2 = mt * mt;
     float t2 = t * t;
@@ -601,6 +602,7 @@ export class PlayCanvasRenderer implements Renderer {
   private _ssaoIntensity = 0.5;
   private _ssaoRadius = 0.5;
   private _ssaoPower = 6.0;
+  private _arcCurvature = 1.0;
 
   stats = { fps: 0, triangles: 0 };
 
@@ -930,6 +932,9 @@ void main() {
   setMaterial(props: MaterialProps): void {
     this._materialProps = props;
     this._writeMaterialParams();
+    if (props.ssaoIntensity !== undefined) this.setSSAOIntensity(props.ssaoIntensity);
+    if (props.ssaoRadius !== undefined) this.setSSAORadius(props.ssaoRadius);
+    if (props.arcCurvature !== undefined) this.setArcCurvature(props.arcCurvature);
   }
 
   private _materialProps?: MaterialProps;
@@ -977,6 +982,10 @@ void main() {
 
   setSSAORadius(v: number) {
     this._ssaoRadius = v;
+  }
+
+  setArcCurvature(v: number) {
+    this._arcCurvature = Math.max(0.1, Math.min(1.0, v));
   }
 
   set ssaoEnabled(v: boolean) {
@@ -1377,6 +1386,9 @@ void main() { gl_FragColor = vec4(1000.0, 0.0, 0.0, 1.0); }`,
       this._material?.setParameter('camera_position', camPos);
       this._capMaterial?.setParameter('camera_position', camPos);
     }
+
+    // Set arc curvature uniform for body shader
+    this._material?.setParameter('uArcCurvature', this._arcCurvature);
 
     this.app.render();
     this._fpsFrames++;

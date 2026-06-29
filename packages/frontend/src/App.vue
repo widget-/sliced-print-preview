@@ -43,7 +43,9 @@
         <SliderControl label="Shadow Softness" v-model="shadowSoftness" :min="0.5" :max="6" :step="0.1" :decimals="1" />
         <SliderControl label="Contact Shadows" v-model="contactShadowStrength" :max="1" :step="0.01" />
         <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="0.5" :step="0.001" :decimals="3" />
-        <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="5" :step="0.01" />
+        <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="1" :step="0.01" />
+        <SliderControl label="SSAO Radius" v-model="ssaoRadius" :min="0" :max="1" :step="0.01" :decimals="2" />
+        <SliderControl label="Arc Curvature" v-model="arcCurvature" :min="0.1" :max="1" :step="0.01" :decimals="2" />
         <label>Color</label>
         <input type="color" v-model="baseColorTint" class="color-picker" />
         <label class="checkbox-label">
@@ -92,6 +94,7 @@
         :contactShadowStrength="contactShadowStrength"
         :ssaoIntensity="ssaoIntensity"
         :ssaoRadius="ssaoRadius"
+        :arcCurvature="arcCurvature"
         :debugPreview="debugPreview"
         @model-loaded="onModelLoaded"
       />
@@ -125,8 +128,9 @@ const keyLightIntensity = ref(1.0);
 const fillLightIntensity = ref(0.4);
 const contactShadowDist = ref(0.05);
 const contactShadowStrength = ref(0.5);
-const ssaoIntensity = ref(3.0);
-const ssaoRadius = ref(0.06);
+const ssaoIntensity = ref(0.5);
+const ssaoRadius = ref(0.5);
+const arcCurvature = ref(1.0);
 const envMapUrl = ref('ferndale_studio_07_1k.hdr');
 const envMapFiles = [
   'ferndale_studio_07_1k.hdr',

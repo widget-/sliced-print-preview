@@ -5,6 +5,9 @@ export interface MaterialProps {
   specularStrength: number;
   ambientStrength: number;
   baseColorTint: string; // hex e.g. '#e8e0d4'
+  ssaoIntensity?: number;
+  ssaoRadius?: number;
+  arcCurvature?: number;
 }
 
 export interface ScreenshotHooks {
