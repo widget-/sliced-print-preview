@@ -140,7 +140,7 @@ const envMapFiles = [
   'wooden_studio_03_1k.hdr',
 ];
 
-const debugPreview = ref<string>('none');
+const debugPreview = ref<'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'shadow2' | 'velocity' | 'composite-taa' | 'blur-temp' | 'brdf-lut' | 'prefilter-up' | 'prefilter-fwd' | 'prefilter-down' | 'source-up' | 'source-fwd' | 'source-down' | 'worldpos'>('none');
 
 function fmt(ms: number | undefined): string {
   if (ms === undefined || ms === null) return '-';
@@ -165,7 +165,7 @@ const resizing = ref(false);
 let resizeStartVal = 0;
 let resizeStartPercent = 60;
 
-function getResizeClient(e: MouseEvent | TouchEvent): number {
+function getResizeClient(e: MouseEvent | TouchEvent): Touch | MouseEvent {
   return 'touches' in e ? e.touches[0] : e;
 }
 

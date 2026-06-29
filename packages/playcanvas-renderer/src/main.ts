@@ -813,7 +813,7 @@ void main() {
       uniqueName: 'segment-body',
       vertexGLSL: vertSrc,
       fragmentGLSL: fragSrc,
-      attributes: DEBUG_SHADER ? {
+      attributes: (DEBUG_SHADER ? {
         vertex_position: pc.SEMANTIC_POSITION,
       } : {
         vertex_position: pc.SEMANTIC_POSITION,
@@ -822,7 +822,7 @@ void main() {
         instance_line2: pc.SEMANTIC_ATTR13,
         instance_line3: pc.SEMANTIC_ATTR14,
         instance_line4: pc.SEMANTIC_ATTR15,
-      },
+      }) as { [x: string]: string },
     };
     this._material = new pc.ShaderMaterial(shaderDesc);
 
@@ -897,6 +897,7 @@ void main() {
         base: 0,
         count: capGeo.indices.length,
         indexed: true,
+        baseVertex: 0,
       }];
       capMesh.update();
 
@@ -1282,25 +1283,19 @@ void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 
     for (const mi of meshEntity.render?.meshInstances ?? []) {
       allInstances.push(mi);
     }
-    const capEntity = this.app.root.findByName('caps');
+    const capEntity = this.app.root.findByName('caps') as pc.Entity | null;
     for (const mi of capEntity?.render?.meshInstances ?? []) {
       allInstances.push(mi);
     }
     if (allInstances.length === 0) return;
 
     // Swap materials for depth pass
-    const saved: pc.ShaderMaterial[] = allInstances.map(mi => mi.material as pc.ShaderMaterial);
-    for (const mi of allInstances) {
-      const isCap = mi.material === this._capMaterial || saved[allInstances.indexOf(mi)] === this._capMaterial;
-      // Actually, just check if mesh is from cap entity
-    }
-    // Use a simpler approach: just assign depth materials based on entity source
-    const bodyInsts = meshEntity.render?.meshInstances ?? [];
-    const capInsts = capEntity?.render?.meshInstances ?? [];
-    const savedBody: pc.ShaderMaterial[] = [];
-    const savedCap: pc.ShaderMaterial[] = [];
-    for (const mi of bodyInsts) { savedBody.push(mi.material as pc.ShaderMaterial); mi.material = this._ssaoDepthMaterial; }
-    for (const mi of capInsts) { savedCap.push(mi.material as pc.ShaderMaterial); mi.material = this._ssaoDepthCapMaterial; }
+    const bodyInsts: pc.MeshInstance[] = meshEntity.render?.meshInstances ?? [];
+    const capInsts: pc.MeshInstance[] = capEntity?.render?.meshInstances ?? [];
+    const savedBody: pc.Material[] = [];
+    const savedCap: pc.Material[] = [];
+    for (const mi of bodyInsts) { savedBody.push(mi.material as pc.Material); if (this._ssaoDepthMaterial) mi.material = this._ssaoDepthMaterial; }
+    for (const mi of capInsts) { savedCap.push(mi.material as pc.Material); if (this._ssaoDepthCapMaterial) mi.material = this._ssaoDepthCapMaterial; }
 
     // ── 1. Pre-fill depth RT with far-clip (avoids lazy-init + camera clearColor hack) ──
     if (!this._ssaoClearShader) {
@@ -1369,7 +1364,7 @@ void main() { gl_FragColor = vec4(1000.0, 0.0, 0.0, 1.0); }`,
     pc.drawQuadWithShader(device, this._ssaoAORt!, this._ssaoBlurShaderV!);
 
     // ── 5. Grab scene color from back buffer (after CameraFrame) ──
-    device.copyRenderTarget(null, this._sceneColorRt!, true, false);
+    (device as any).copyRenderTarget(null, this._sceneColorRt!, true, false);
 
     // ── 6. Composite: scene × AO → back buffer ──
     scope.resolve('uSceneTexture').setValue(this._sceneColorRt!.colorBuffer);
@@ -1448,7 +1443,7 @@ void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 
       pc.drawQuadWithShader(device, null, this._debugShader);
     } else if (this._debugMode === 'occlusion' && this._ssaoAORt) {
       // Just copy AO texture to screen
-      device.copyRenderTarget(this._ssaoAORt, null, true, false);
+      (device as any).copyRenderTarget(this._ssaoAORt, null, true, false);
     }
   }
 }
