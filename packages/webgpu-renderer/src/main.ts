@@ -230,7 +230,7 @@ export class WebGPURenderer implements Renderer {
   private _loopActive = false;
   private _idleFrames = 0;
   private _prevCamPos = new Float64Array(3);
-  private readonly IDLE_THRESHOLD = 5; // stop after 5 stable frames
+  private readonly IDLE_THRESHOLD = 20; // stop after 20 stable frames (TAA needs time to converge)
 
   /** Restart the render loop (call when camera or state changes). */
   private _startLoop() {
