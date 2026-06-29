@@ -2,6 +2,7 @@ import type { MaterialProps, Renderer, ScreenshotHooks } from '@sliced/shared';
 import { loadSegbin, type SegbinData } from '@sliced/shared';
 import { generateBodyGeometry, generateCapGeometry } from './geometry';
 import * as pc from 'playcanvas';
+import ssaoEngineGLSL from './ssao-engine.glsl.js';
 
 // ── Segment data per-instance layout ──
 // ATTR12: startPos.xyz + width          (vec4)
@@ -300,8 +301,13 @@ void main() {
   vec3 specular = (D * F * G) / max(4.0 * NdotV * NdotL, 0.001);
   vec3 diffuse = baseColor / PI * (1.0 - mix(0.0, 1.0, metalness));
 
+  // Wrap diffuse: prevents back faces from going completely black
+  // when ambient is low. Maps NdotL from [-1,1] to [wrap/(1+wrap), 1].
+  float wrap = 0.25;
+  float NdotL_wrapped = (NdotL + wrap) / (1.0 + wrap);
+
   vec3 ambient = baseColor * ambientStrength * uEnvIntensity;
-  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL * lightIntensity * PI;
+  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL_wrapped * lightIntensity * PI;
 
   gl_FragColor = vec4(lit, 1.0);
 }
@@ -398,6 +404,7 @@ varying vec3 vColor;
 uniform vec3 lightDir;
 uniform float lightIntensity;
 uniform float ambientStrength;
+uniform vec3 camera_position;
 uniform float uRoughness;
 uniform float uMetalness;
 uniform float uEnvIntensity;
@@ -425,8 +432,7 @@ float smithG(vec3 N, vec3 V, vec3 L, float a) {
 
 void main() {
   vec3 N = normalize(vWorldNormal);
-  // Caps don't have camera position — estimate view dir
-  vec3 V = normalize(vec3(0.0, 0.0, 1.0));
+  vec3 V = normalize(camera_position - vWorldPos);
   vec3 L = normalize(lightDir);
   vec3 H = normalize(L + V);
 
@@ -444,10 +450,109 @@ void main() {
 
   vec3 specular = (D * F * G) / max(4.0 * NdotV * NdotL, 0.001);
   vec3 diffuse = baseColor / PI * (1.0 - mix(0.0, 1.0, metalness));
+  // Wrap diffuse: prevents back faces from going completely black
+  // when ambient is low. Maps NdotL from [-1,1] to [wrap/(1+wrap), 1].
+  float wrap = 0.25;
+  float NdotL_wrapped = (NdotL + wrap) / (1.0 + wrap);
+
   vec3 ambient = baseColor * ambientStrength * uEnvIntensity;
-  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL * lightIntensity * PI;
+  vec3 lit = ambient + (diffuse + specular * uSpecularStrength) * NdotL_wrapped * lightIntensity * PI;
 
   gl_FragColor = vec4(lit, 1.0);
+}
+`;
+
+// ── Debug depth visualization shader (fullscreen quad) ──
+// Log-scale mapping: near=bright, far=dark, with visible gradation
+const DEBUG_DEPTH_FRAG_GLSL = `
+varying vec2 uv0;
+uniform sampler2D uSceneDepthMap;
+void main() {
+  float linearDepth = texture2D(uSceneDepthMap, uv0).r;
+  // Reciprocal mapping: depth 0->1.0, depth 200->0.5, depth 1000->0.17
+  float v = 1.0 / (1.0 + linearDepth * 0.005);
+  gl_FragColor = vec4(v, v, v, 1.0);
+}
+`;
+
+// ── Depth-only fragment shader (writes linear view-space Z to R channel) ──
+const DEPTH_ONLY_FRAG_GLSL = `
+varying vec3 vWorldPos;
+uniform mat4 matrix_view;
+void main() {
+  float viewZ = -(matrix_view * vec4(vWorldPos, 1.0)).z;
+  gl_FragColor = vec4(viewZ, 0.0, 0.0, 1.0);
+}
+`;
+
+const SSAO_COMPOSITE_FRAG_GLSL = `
+varying vec2 uv0;
+uniform sampler2D uSceneTexture;
+uniform sampler2D uAOTexture;
+void main() {
+  vec4 scene = texture2D(uSceneTexture, uv0);
+  float ao = texture2D(uAOTexture, uv0).r;
+  gl_FragColor = vec4(scene.rgb * ao, scene.a);
+}
+`;
+
+// ── World-space depth-aware bilateral blur shader ──
+// Takes a world-space blur radius and projects it to screen-space per pixel,
+// so the blur covers the same world-space area regardless of camera distance.
+const SSAO_BLUR_FRAG_GLSL = `
+varying vec2 uv0;
+uniform sampler2D uDepthMap;
+uniform sampler2D sourceTexture;
+uniform vec2 sourceInvResolution;
+uniform float uWorldBlurRadius;
+uniform float uProjectionScale;
+
+float random(const highp vec2 w) {
+  const vec3 m = vec3(0.06711056, 0.00583715, 52.9829189);
+  return fract(m.z * fract(dot(w, m.xy)));
+}
+
+float getLinearDepth(vec2 uv) { return texture2D(uDepthMap, uv).r; }
+float getLinearScreenDepth(vec2 uv) { return getLinearDepth(uv); }
+
+mediump float bilateralWeight(in mediump float depth, in mediump float sampleDepth) {
+  mediump float diff = (sampleDepth - depth);
+  return max(0.0, 1.0 - diff * diff);
+}
+
+void tap(inout float sum, inout float totalWeight, float weight, float depth, vec2 position) {
+  mediump float color = texture2D(sourceTexture, position).r;
+  mediump float textureDepth = -getLinearScreenDepth(position);
+  mediump float bilateral = bilateralWeight(depth, textureDepth);
+  bilateral *= weight;
+  sum += color * bilateral;
+  totalWeight += bilateral;
+}
+
+void main() {
+  mediump float depth = -getLinearScreenDepth(uv0);
+  mediump float totalWeight = 1.0;
+  mediump float color = texture2D(sourceTexture, uv0).r;
+  mediump float sum = color * totalWeight;
+
+  // Project world-space blur radius to screen-space pixels
+  mediump float ssBlurPixels = uWorldBlurRadius * uProjectionScale / max(-depth, 0.001);
+  int filterSize = int(min(ceil(ssBlurPixels), 20.0));
+
+  for (int i = -filterSize; i <= filterSize; i++) {
+    mediump float weight = 1.0;
+
+    #ifdef HORIZONTAL
+      vec2 offset = vec2(i, 0) * sourceInvResolution;
+    #else
+      vec2 offset = vec2(0, i) * sourceInvResolution;
+    #endif
+
+    tap(sum, totalWeight, weight, depth, uv0 + offset);
+  }
+
+  mediump float ao = sum / totalWeight;
+  gl_FragColor = vec4(ao, ao, ao, 1.0);
 }
 `;
 
@@ -462,9 +567,30 @@ export class PlayCanvasRenderer implements Renderer {
   private _statsTimer?: ReturnType<typeof setInterval>;
   private _fpsFrames = 0;
   private _fpsTime = 0;
+  private _keyLight?: pc.Entity;
+  private _fillLight?: pc.Entity;
   private _cameraFrame?: pc.CameraFrame;
   private _material?: pc.ShaderMaterial;
   private _capMaterial?: pc.ShaderMaterial;
+  private _debugMode = 'none';
+  private _debugShader?: pc.Shader;
+  // Standalone SSAO pipeline
+  private _ssaoDepthRt?: pc.RenderTarget;
+  private _ssaoAORt?: pc.RenderTarget;
+  private _sceneColorRt?: pc.RenderTarget;
+  private _ssaoDepthMaterial?: pc.ShaderMaterial;
+  private _ssaoDepthCapMaterial?: pc.ShaderMaterial;
+  private _ssaoComputeShader?: pc.Shader;
+  private _ssaoClearShader?: pc.Shader;
+  private _ssaoCompositeShader?: pc.Shader;
+  private _ssaoBlurTempRt?: pc.RenderTarget;
+  private _ssaoBlurShaderH?: pc.Shader;
+  private _ssaoBlurShaderV?: pc.Shader;
+  private _ssaoDirty = true;
+  private _ssaoEnabled = true;
+  private _ssaoIntensity = 0.5;
+  private _ssaoRadius = 0.5;
+  private _ssaoPower = 6.0;
 
   stats = { fps: 0, triangles: 0 };
 
@@ -474,7 +600,7 @@ export class PlayCanvasRenderer implements Renderer {
 
     this.app = new pc.Application(canvas, {
       graphicsDeviceOptions: {
-        antialias: true,
+        antialias: false,  // TAA handles antialiasing; hw MSAA causes blit format warnings
         alpha: false,
         preferWebGl2: true,
         powerPreference: 'high-performance',
@@ -517,6 +643,7 @@ export class PlayCanvasRenderer implements Renderer {
     });
     keyLight.setLocalEulerAngles(45, 30, 0);
     app.root.addChild(keyLight);
+    this._keyLight = keyLight;
 
     const fillLight = new pc.Entity('fillLight');
     fillLight.addComponent('light', {
@@ -530,21 +657,20 @@ export class PlayCanvasRenderer implements Renderer {
     });
     fillLight.setLocalEulerAngles(-30, -45, 0);
     app.root.addChild(fillLight);
+    this._fillLight = fillLight;
 
     app.scene.ambientLight = new pc.Color(0.3, 0.3, 0.35);
 
     // ── CameraFrame (SSAO + TAA + tone mapping) ──
     const cameraFrame = new pc.CameraFrame(app, this._cameraEntity.camera!);
     this._cameraFrame = cameraFrame;
-    cameraFrame.ssao.type = pc.SSAOTYPE_COMBINE;
-    cameraFrame.ssao.blurEnabled = true;
+    cameraFrame.rendering.sceneDepthMap = true;   // required for SSAO depth prepass
+    cameraFrame.ssao.type = pc.SSAOTYPE_NONE;       // disabled: ShaderMaterial can't output linear depth for prepass
     cameraFrame.taa.enabled = true;
     cameraFrame.taa.jitter = 1.0;
-    cameraFrame.bloom.enabled = true;
-    cameraFrame.bloom.intensity = 0.3;
-    // Keep default tone mapping (ACES)
+    cameraFrame.update();                          // commit all settings
 
-    console.log('[PlayCanvas] CameraFrame enabled: SSAO + TAA + Bloom');
+    console.log('[PlayCanvas] CameraFrame enabled: SSAO (COMBINE) + TAA');
 
     // ── Skybox placeholder ──
     app.scene.envAtlas = null;
@@ -820,12 +946,35 @@ void main() {
     }
   }
 
+  setShadowSoftness(v: number) {
+    // Map 0-5 slider to PCF levels: 0-1=PCF1, 1-3=PCF3, 3-5=PCF5
+    const type = v <= 1 ? pc.SHADOW_PCF1 : v <= 3 ? pc.SHADOW_PCF3 : pc.SHADOW_PCF5;
+    if (this._keyLight?.light) this._keyLight.light.shadowType = type;
+    if (this._fillLight?.light) this._fillLight.light.shadowType = type;
+  }
+
+  setKeyLightIntensity(v: number) {
+    if (this._keyLight?.light) this._keyLight.light.intensity = v;
+  }
+
+  setFillLightIntensity(v: number) {
+    if (this._fillLight?.light) this._fillLight.light.intensity = v;
+  }
+
   setSSAOIntensity(v: number) {
-    if (this._cameraFrame) this._cameraFrame.ssao.intensity = v;
+    this._ssaoIntensity = v;
   }
 
   setSSAORadius(v: number) {
-    if (this._cameraFrame) this._cameraFrame.ssao.radius = v;
+    this._ssaoRadius = v;
+  }
+
+  set ssaoEnabled(v: boolean) {
+    this._ssaoEnabled = v;
+  }
+
+  set debugPreview(v: string) {
+    this._debugMode = v ?? 'none';
   }
 
   async setEnvMap(url: string): Promise<void> {
@@ -853,6 +1002,7 @@ void main() {
     this._disposed = true;
     this._resizeObserver?.disconnect();
     if (this._statsTimer) clearInterval(this._statsTimer);
+    this._cameraFrame?.destroy();
     this._meshEntity?.destroy();
     this.app?.destroy();
   }
@@ -946,6 +1096,246 @@ void main() {
     this._orbitDirty = true;
   }
 
+  // ── Standalone SSAO pipeline ──
+
+  private _setupSsaoPipeline() {
+    const device = this.app.graphicsDevice;
+    const w = device.width;
+    const h = device.height;
+    if (w === 0 || h === 0) return;
+
+    // Lazy-create / resize render targets
+    if (!this._ssaoDepthRt || this._ssaoDepthRt.width !== w || this._ssaoDepthRt.height !== h) {
+      this._ssaoDepthRt?.destroy();
+      this._ssaoAORt?.destroy();
+      this._sceneColorRt?.destroy();
+      this._ssaoBlurTempRt?.destroy();
+
+      const depthTex = new pc.Texture(device, {
+        name: 'SSAODepth', width: w, height: h,
+        format: pc.PIXELFORMAT_R32F,
+        mipmaps: false, minFilter: pc.FILTER_NEAREST, magFilter: pc.FILTER_NEAREST,
+        addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      });
+      this._ssaoDepthRt = new pc.RenderTarget({ colorBuffer: depthTex, depth: true });
+
+      const aoTex = new pc.Texture(device, {
+        name: 'SSAOAO', width: w, height: h,
+        format: pc.PIXELFORMAT_R8,
+        mipmaps: false, minFilter: pc.FILTER_LINEAR, magFilter: pc.FILTER_LINEAR,
+        addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      });
+      this._ssaoAORt = new pc.RenderTarget({ colorBuffer: aoTex, depth: false });
+
+      const sceneTex = new pc.Texture(device, {
+        name: 'SSAOScene', width: w, height: h,
+        format: pc.PIXELFORMAT_RGBA8,
+        mipmaps: false, minFilter: pc.FILTER_LINEAR, magFilter: pc.FILTER_LINEAR,
+        addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      });
+      this._sceneColorRt = new pc.RenderTarget({ colorBuffer: sceneTex, depth: false });
+
+      const blurTex = new pc.Texture(device, {
+        name: 'SSAOBlurTemp', width: w, height: h,
+        format: pc.PIXELFORMAT_R8,
+        mipmaps: false, minFilter: pc.FILTER_LINEAR, magFilter: pc.FILTER_LINEAR,
+        addressU: pc.ADDRESS_CLAMP_TO_EDGE, addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+      });
+      this._ssaoBlurTempRt = new pc.RenderTarget({ colorBuffer: blurTex, depth: false });
+
+      // Lazy-create custom world-space depth-aware blur shaders
+      // (replaces engine's RenderPassDepthAwareBlur which uses fixed filterSize=4)
+      if (!this._ssaoBlurShaderH) {
+        this._ssaoBlurShaderH = pc.ShaderUtils.createShader(device, {
+          uniqueName: 'SsaoBlurH',
+          attributes: { aPosition: pc.SEMANTIC_POSITION },
+          vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+          fragmentGLSL: `#define HORIZONTAL\n${SSAO_BLUR_FRAG_GLSL}`,
+        });
+        this._ssaoBlurShaderV = pc.ShaderUtils.createShader(device, {
+          uniqueName: 'SsaoBlurV',
+          attributes: { aPosition: pc.SEMANTIC_POSITION },
+          vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+          fragmentGLSL: SSAO_BLUR_FRAG_GLSL,
+        });
+      }
+
+      this._ssaoDirty = true;
+    }
+
+    // Lazy-create depth-only materials
+    if (this._ssaoDirty && this._material) {
+      // Body depth material — reuse body vertex shader, pair with depth-only fragment
+      if (!this._ssaoDepthMaterial) {
+        this._ssaoDepthMaterial = new pc.ShaderMaterial({
+          uniqueName: 'segment-body-depth',
+          vertexGLSL: BODY_VERT_GLSL,
+          fragmentGLSL: DEPTH_ONLY_FRAG_GLSL,
+          attributes: {
+            vertex_position: pc.SEMANTIC_POSITION,
+            vertex_normal: pc.SEMANTIC_NORMAL,
+            instance_line1: pc.SEMANTIC_ATTR12,
+            instance_line2: pc.SEMANTIC_ATTR13,
+            instance_line3: pc.SEMANTIC_ATTR14,
+            instance_line4: pc.SEMANTIC_ATTR15,
+          },
+        });
+        this._ssaoDepthMaterial.defines.set('INSTANCING', '');
+      }
+
+      // Cap depth material
+      if (!this._ssaoDepthCapMaterial) {
+        this._ssaoDepthCapMaterial = new pc.ShaderMaterial({
+          uniqueName: 'segment-cap-depth',
+          vertexGLSL: CAP_VERT_GLSL,
+          fragmentGLSL: DEPTH_ONLY_FRAG_GLSL,
+          attributes: {
+            vertex_position: pc.SEMANTIC_POSITION,
+            vertex_normal: pc.SEMANTIC_NORMAL,
+            instance_line1: pc.SEMANTIC_ATTR12,
+            instance_line2: pc.SEMANTIC_ATTR13,
+            instance_line3: pc.SEMANTIC_ATTR14,
+            instance_line4: pc.SEMANTIC_ATTR15,
+          },
+        });
+        this._ssaoDepthCapMaterial.defines.set('INSTANCING', '');
+      }
+
+      // Lazy-create compute + composite shaders
+      if (!this._ssaoComputeShader) {
+        this._ssaoComputeShader = pc.ShaderUtils.createShader(device, {
+          uniqueName: 'SSAOComputeV2',
+          attributes: { aPosition: pc.SEMANTIC_POSITION },
+          vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+          fragmentGLSL: ssaoEngineGLSL,
+        });
+      }
+      if (!this._ssaoCompositeShader) {
+        this._ssaoCompositeShader = pc.ShaderUtils.createShader(device, {
+          uniqueName: 'SSAOComposite',
+          attributes: { aPosition: pc.SEMANTIC_POSITION },
+          vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+          fragmentGLSL: SSAO_COMPOSITE_FRAG_GLSL,
+        });
+      }
+      this._ssaoDirty = false;
+    }
+  }
+
+  private _renderSsao() {
+    const device = this.app.graphicsDevice;
+    const w = device.width;
+    const h = device.height;
+    this._setupSsaoPipeline();
+
+    const meshEntity = this._meshEntity;
+    if (!meshEntity || !this._ssaoDepthRt || !this._ssaoDepthMaterial) return;
+
+    // ── 1. Depth pass: render meshes to depth RT ──
+    // Collect all mesh instances from body + cap entities
+    const allInstances: pc.MeshInstance[] = [];
+    for (const mi of meshEntity.render?.meshInstances ?? []) {
+      allInstances.push(mi);
+    }
+    const capEntity = this.app.root.findByName('caps');
+    for (const mi of capEntity?.render?.meshInstances ?? []) {
+      allInstances.push(mi);
+    }
+    if (allInstances.length === 0) return;
+
+    // Swap materials for depth pass
+    const saved: pc.ShaderMaterial[] = allInstances.map(mi => mi.material as pc.ShaderMaterial);
+    for (const mi of allInstances) {
+      const isCap = mi.material === this._capMaterial || saved[allInstances.indexOf(mi)] === this._capMaterial;
+      // Actually, just check if mesh is from cap entity
+    }
+    // Use a simpler approach: just assign depth materials based on entity source
+    const bodyInsts = meshEntity.render?.meshInstances ?? [];
+    const capInsts = capEntity?.render?.meshInstances ?? [];
+    const savedBody: pc.ShaderMaterial[] = [];
+    const savedCap: pc.ShaderMaterial[] = [];
+    for (const mi of bodyInsts) { savedBody.push(mi.material as pc.ShaderMaterial); mi.material = this._ssaoDepthMaterial; }
+    for (const mi of capInsts) { savedCap.push(mi.material as pc.ShaderMaterial); mi.material = this._ssaoDepthCapMaterial; }
+
+    // ── 1. Pre-fill depth RT with far-clip (avoids lazy-init + camera clearColor hack) ──
+    if (!this._ssaoClearShader) {
+      this._ssaoClearShader = pc.ShaderUtils.createShader(device, {
+        uniqueName: 'SSAOClear',
+        attributes: { aPosition: pc.SEMANTIC_POSITION },
+        vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.0, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+        fragmentGLSL: `varying vec2 uv0;
+void main() { gl_FragColor = vec4(1000.0, 0.0, 0.0, 1.0); }`,
+      });
+    }
+    pc.drawQuadWithShader(device, this._ssaoDepthRt, this._ssaoClearShader);
+
+    // ── 2. Depth pass: render meshes with depth-only shader ──
+    const cameraComponent = this._cameraEntity!.camera!;
+    const camera = cameraComponent.camera;
+    const renderer = (this.app as any).renderer;
+    renderer.renderForwardLayer(camera, this._ssaoDepthRt, null, false, pc.SHADER_FORWARD, null, {
+      meshInstances: [...bodyInsts, ...capInsts],
+      clearDepth: true,
+    });
+
+    // Restore materials
+    for (let i = 0; i < bodyInsts.length; i++) bodyInsts[i].material = savedBody[i];
+    for (let i = 0; i < capInsts.length; i++) capInsts[i].material = savedCap[i];
+
+    // ── 3. SSAO compute pass (verbatim engine SAO) ──
+    const scope = device.scope;
+    const sampleCount = 16.0;
+    const spiralTurns = 10.0;
+    const angleInc = (1.0 / (sampleCount - 0.5)) * spiralTurns * 2.0 * Math.PI;
+    const invRadius = 1.0 / Math.max(this._ssaoRadius * this._ssaoRadius, 0.0001);
+    const minHorizonSin2 = Math.sin(10.0 * Math.PI / 180.0) ** 2;
+    const projectionScale = 0.5 * h;  // engine: 0.5 * sourceTexture.height
+
+    scope.resolve('uDepthMap').setValue(this._ssaoDepthRt.colorBuffer);
+    scope.resolve('uInvResolution').setValue([1 / w, 1 / h]);
+    scope.resolve('uAspect').setValue(w / h);
+    scope.resolve('uInvRadiusSquared').setValue(invRadius);
+    scope.resolve('uProjectionScaleRadius').setValue(this._ssaoRadius * projectionScale);
+    scope.resolve('uIntensity').setValue(this._ssaoIntensity);
+    scope.resolve('uPower').setValue(this._ssaoPower);
+    scope.resolve('uBias').setValue(0.001);
+    scope.resolve('uSampleCount').setValue([sampleCount, 1.0 / sampleCount]);
+    scope.resolve('uSpiralTurns').setValue(spiralTurns);
+    scope.resolve('uAngleIncCosSin').setValue([Math.cos(angleInc), Math.sin(angleInc)]);
+    scope.resolve('uMinHorizonAngleSineSquared').setValue(minHorizonSin2);
+    scope.resolve('uMaxLevel').setValue(0.0);
+    scope.resolve('uPeak2').setValue((0.1 * this._ssaoRadius) ** 2);
+    scope.resolve('uRandomize').setValue(0.0); // breaks spiral banding
+    pc.drawQuadWithShader(device, this._ssaoAORt!, this._ssaoComputeShader!);
+
+    // ── 4. World-space depth-aware bilateral blur ──
+    // H pass: blur AO horizontally → temp RT
+    const bw = this._ssaoAORt!.colorBuffer.width;
+    const bh = this._ssaoAORt!.colorBuffer.height;
+    scope.resolve('sourceTexture').setValue(this._ssaoAORt!.colorBuffer);
+    scope.resolve('sourceInvResolution').setValue([1 / bw, 1 / bh]);
+    scope.resolve('uWorldBlurRadius').setValue(0.01);
+    scope.resolve('uProjectionScale').setValue(0.5 * h);
+    pc.drawQuadWithShader(device, this._ssaoBlurTempRt!, this._ssaoBlurShaderH!);
+
+    // V pass: blur vertically → AO RT (reads from temp RT)
+    scope.resolve('sourceTexture').setValue(this._ssaoBlurTempRt!.colorBuffer);
+    pc.drawQuadWithShader(device, this._ssaoAORt!, this._ssaoBlurShaderV!);
+
+    // ── 5. Grab scene color from back buffer (after CameraFrame) ──
+    device.copyRenderTarget(null, this._sceneColorRt!, true, false);
+
+    // ── 6. Composite: scene × AO → back buffer ──
+    scope.resolve('uSceneTexture').setValue(this._sceneColorRt!.colorBuffer);
+    scope.resolve('uAOTexture').setValue(this._ssaoAORt!.colorBuffer);
+    pc.drawQuadWithShader(device, null, this._ssaoCompositeShader!);
+  }
+
   private _startLoop() {
     if (this._animate) return;
     this._animate = true;
@@ -966,16 +1356,55 @@ void main() {
 
     this._updateCamera();
     this.app.update(dt);
+
+    // Apply CameraFrame parameter changes each frame
+    this._cameraFrame?.update();
+
+    // Set camera position uniform for ShaderMaterial (not auto-provided)
+    if (this._cameraEntity) {
+      const cp = this._cameraEntity.getPosition();
+      const camPos = new Float32Array([cp.x, cp.y, cp.z]);
+      this._material?.setParameter('camera_position', camPos);
+      this._capMaterial?.setParameter('camera_position', camPos);
+    }
+
     this.app.render();
     this._fpsFrames++;
     this._fpsFrames++;
 
-    // Debug: log camera position on first 5 frames
-    if (this._fpsFrames <= 5 && this._cameraEntity) {
-      const pos = this._cameraEntity.getPosition();
-      console.log(`[PlayCanvas] frame ${this._fpsFrames}: camera pos=(${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}), target=(${this._orbitTarget.x.toFixed(1)}, ${this._orbitTarget.y.toFixed(1)}, ${this._orbitTarget.z.toFixed(1)})`);
+    // Standalone SSAO pipeline (depth pass → SSAO → composite)
+    if (this._ssaoEnabled) {
+      this._renderSsao();
+    }
+
+    // Debug visualization
+    if (this._debugMode !== 'none') {
+      this._renderDebugView();
     }
 
     requestAnimationFrame(this._loop);
   };
+
+  private _renderDebugView() {
+    const device = this.app.graphicsDevice;
+
+    // Use our SSAO depth texture for 'depth' mode, AO texture for 'occlusion'
+    if (this._debugMode === 'depth' && this._ssaoDepthRt) {
+      // Lazy-create depth debug shader
+      if (!this._debugShader) {
+        this._debugShader = pc.ShaderUtils.createShader(device, {
+          uniqueName: 'DebugDepth',
+          attributes: { aPosition: pc.SEMANTIC_POSITION },
+          vertexGLSL: `attribute vec2 aPosition; varying vec2 uv0;
+void main() { gl_Position = vec4(aPosition, 0.5, 1.0); uv0 = aPosition.xy * 0.5 + 0.5; }`,
+          fragmentGLSL: DEBUG_DEPTH_FRAG_GLSL,
+        });
+      }
+      device.scope.resolve('uSceneDepthMap').setValue(this._ssaoDepthRt.colorBuffer);
+      pc.drawQuadWithShader(device, null, this._debugShader);
+    } else if (this._debugMode === 'occlusion' && this._ssaoAORt) {
+      // Just copy AO texture to screen
+      device.copyRenderTarget(this._ssaoAORt, null, true, false);
+    }
+  }
 }
