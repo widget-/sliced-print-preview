@@ -1025,18 +1025,23 @@ void main() {
 
   resize(): void {
     if (!this._canvas || !this._container) return;
-    const w = this._container.clientWidth;
-    const h = this._container.clientHeight;
-    if (w === 0 || h === 0) return;
+    const cssW = this._container.clientWidth;
+    const cssH = this._container.clientHeight;
+    if (cssW === 0 || cssH === 0) return;
 
-    const iw = Math.round(w);
-    const ih = Math.round(h);
-    if (this._canvas.width !== iw || this._canvas.height !== ih) {
-      this.app.graphicsDevice.resizeCanvas(iw, ih);
+    const dpr = window.devicePixelRatio || 1;
+    const physW = Math.round(cssW * dpr);
+    const physH = Math.round(cssH * dpr);
+
+    if (this._canvas.width !== physW || this._canvas.height !== physH) {
+      this.app.graphicsDevice.resizeCanvas(physW, physH);
     }
+    // Keep CSS size at logical pixels so the canvas isn't shrunk by the buffer
+    this._canvas.style.width = `${cssW}px`;
+    this._canvas.style.height = `${cssH}px`;
     const cam = this._cameraEntity?.camera;
     if (cam) {
-      cam.aspectRatio = iw / ih;
+      cam.aspectRatio = physW / physH;
     }
   }
 

@@ -182,22 +182,24 @@ export class WebGPURenderer implements Renderer {
   resize(): void {
     if (!this.context || !this._mounted) return;
     const canvas = this.context.canvas as HTMLCanvasElement;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
-    if (w === 0 || h === 0) return;
+    const cssW = canvas.clientWidth;
+    const cssH = canvas.clientHeight;
+    if (cssW === 0 || cssH === 0) return;
 
-    // Only resize if dimensions actually changed
-    // NOTE: canvas.width is unsigned long (integer), clientWidth is double (may be fractional on HiDPI).
-    // Always round to integer so the size matches what _loop() reads from canvas.width,
-    // preventing a ping-pong that recreates textures every frame → GPU OOM.
-    const iw = Math.round(w);
-    const ih = Math.round(h);
-    if (canvas.width !== iw || canvas.height !== ih) {
-      canvas.width = iw;
-      canvas.height = ih;
+    const dpr = window.devicePixelRatio || 1;
+    const physW = Math.round(cssW * dpr);
+    const physH = Math.round(cssH * dpr);
+
+    // Only resize if physical dimensions actually changed
+    if (canvas.width !== physW || canvas.height !== physH) {
+      canvas.width = physW;
+      canvas.height = physH;
     }
+    // Keep CSS size at logical pixels so the canvas isn't shrunk by the buffer
+    canvas.style.width = `${cssW}px`;
+    canvas.style.height = `${cssH}px`;
 
-    // Resize SSAO textures (use integer framebuffer size, not fractional client size)
+    // Resize SSAO textures using physical pixel size
     this.pipeline.resizeSSAO(canvas.width, canvas.height);
 
     // Update camera for new aspect ratio
