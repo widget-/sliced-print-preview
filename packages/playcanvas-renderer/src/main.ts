@@ -728,6 +728,13 @@ export class PlayCanvasRenderer implements Renderer {
 
     this._disposed = false;
     this._startLoop();
+
+    // Resume render loop when user returns to the tab
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !this._animate && !this._disposed) {
+        this._startLoop();
+      }
+    });
   }
 
   async loadModel(url: string): Promise<number> {
@@ -1029,7 +1036,7 @@ void main() {
     const cssH = this._container.clientHeight;
     if (cssW === 0 || cssH === 0) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const physW = Math.round(cssW * dpr);
     const physH = Math.round(cssH * dpr);
 
@@ -1387,6 +1394,12 @@ void main() { gl_FragColor = vec4(1000.0, 0.0, 0.0, 1.0); }`,
 
   private _loop = () => {
     if (this._disposed || !this._animate) {
+      this._animate = false;
+      return;
+    }
+
+    // Pause when page is hidden (background tab / locked mobile screen)
+    if (document.hidden) {
       this._animate = false;
       return;
     }

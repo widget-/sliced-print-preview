@@ -78,6 +78,13 @@ export class WebGPURenderer implements Renderer {
     this.resize();
     this._idleFrames = 0;
     this._startLoop();
+
+    // Resume render loop when user returns to the tab
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && !this._loopActive && !this.disposed) {
+        this._startLoop();
+      }
+    });
   }
 
   async loadModel(url: string): Promise<number> {
@@ -186,7 +193,7 @@ export class WebGPURenderer implements Renderer {
     const cssH = canvas.clientHeight;
     if (cssW === 0 || cssH === 0) return;
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const physW = Math.round(cssW * dpr);
     const physH = Math.round(cssH * dpr);
 
@@ -223,7 +230,7 @@ export class WebGPURenderer implements Renderer {
   private _loopActive = false;
   private _idleFrames = 0;
   private _prevCamPos = new Float64Array(3);
-  private readonly IDLE_THRESHOLD = 20; // stop after 20 stable frames
+  private readonly IDLE_THRESHOLD = 5; // stop after 5 stable frames
 
   /** Restart the render loop (call when camera or state changes). */
   private _startLoop() {
@@ -236,6 +243,11 @@ export class WebGPURenderer implements Renderer {
 
   private _loop = () => {
     if (this.disposed) { this._loopActive = false; return; }
+    // Pause when page is hidden (background tab / locked mobile screen)
+    if (document.hidden) {
+      this._loopActive = false;
+      return;
+    }
     const now = performance.now();
     if (now - this._lastFrameTime < this._minFrameInterval && this._lastFrameTime > 0) {
       requestAnimationFrame(this._loop);
