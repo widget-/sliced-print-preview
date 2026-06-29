@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       '@sliced/shared': resolve(__dirname, '../shared/src'),
       '@sliced/playcanvas-renderer': resolve(__dirname, '../playcanvas-renderer/src'),
+      '@sliced/webgpu-renderer': resolve(__dirname, '../webgpu-renderer/src'),
     },
   },
   server: {

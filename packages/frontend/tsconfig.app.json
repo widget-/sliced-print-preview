@@ -2,12 +2,14 @@
   "extends": "@vue/tsconfig/tsconfig.dom.json",
   "compilerOptions": {
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
-    "types": ["vite/client"],
+    "types": ["vite/client", "@webgpu/types"],
     "paths": {
       "@sliced/shared": ["../shared/src"],
       "@sliced/shared/*": ["../shared/src/*"],
       "@sliced/playcanvas-renderer": ["../playcanvas-renderer/src"],
-      "@sliced/playcanvas-renderer/*": ["../playcanvas-renderer/src/*"]
+      "@sliced/playcanvas-renderer/*": ["../playcanvas-renderer/src/*"],
+      "@sliced/webgpu-renderer": ["../webgpu-renderer/src"],
+      "@sliced/webgpu-renderer/*": ["../webgpu-renderer/src/*"]
     },
 
     /* Linting */

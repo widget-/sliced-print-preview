@@ -126,13 +126,30 @@ onMounted(async () => {
   const canvas = canvasEl.value!;
   const cont = container.value!;
 
-  // PlayCanvas handles WebGPU → WebGL2 fallback internally
-  const { PlayCanvasRenderer } = await import('@sliced/playcanvas-renderer');
-  const r = new PlayCanvasRenderer();
-  await r.mount(cont, canvas);
+  // ── Try WebGPU first, fall back to PlayCanvas (WebGL2) ──
+  let r: any;
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter) {
+        log('WebGPU available — using WebGPU renderer');
+        const { WebGPURenderer } = await import('@sliced/webgpu-renderer');
+        r = new WebGPURenderer();
+        await r.mount(cont, canvas);
+      }
+    } catch (e) {
+      log(`WebGPU init failed: ${e}`);
+    }
+  }
+  if (!r) {
+    log('Falling back to PlayCanvas (WebGL2)');
+    const { PlayCanvasRenderer } = await import('@sliced/playcanvas-renderer');
+    r = new PlayCanvasRenderer();
+    await r.mount(cont, canvas);
+  }
   renderer = r;
   await setupRenderer(r);
-  log('PlayCanvas renderer ready');
+  log('Renderer ready');
 
   async function setupRenderer(r: any) {
     // Stats keyboard toggle
