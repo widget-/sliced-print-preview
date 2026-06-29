@@ -56,6 +56,7 @@ const displayValue = computed(() => {
 <style scoped>
 .slider-control {
   margin: 2px 0;
+  flex: 1 0 100%;
 }
 
 .slider-track-wrap {

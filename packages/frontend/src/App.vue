@@ -14,12 +14,36 @@
         <div>API: {{ timing.api }}ms · Model: {{ timing.model || '...' }}ms</div>
         <table v-if="timing.slice" class="timing-table">
           <tbody>
-            <tr><td>Slice</td><td class="t-ms">{{ fmt(timing.slice) }}</td><td class="t-pct">{{ pct(timing.slice) }}</td></tr>
-            <tr><td>Parse</td><td class="t-ms">{{ fmt(timing.parse) }}</td><td class="t-pct">{{ pct(timing.parse) }}</td></tr>
-            <tr><td>Segment BVH</td><td class="t-ms">{{ fmt(timing.segBvh) }}</td><td class="t-pct">{{ pct(timing.segBvh) }}</td></tr>
-            <tr><td>Ray cull</td><td class="t-ms">{{ fmt(timing.ray) }}</td><td class="t-pct">{{ pct(timing.ray) }}</td></tr>
-            <tr v-if="timing.arc"><td>Arc</td><td class="t-ms">{{ fmt(timing.arc) }}</td><td class="t-pct">{{ pct(timing.arc) }}</td></tr>
-            <tr><td>Gap</td><td class="t-ms">{{ fmt(timing.gap) }}</td><td class="t-pct">{{ pct(timing.gap) }}</td></tr>
+            <tr>
+              <td>Slice</td>
+              <td class="t-ms">{{ fmt(timing.slice) }}</td>
+              <td class="t-pct">{{ pct(timing.slice) }}</td>
+            </tr>
+            <tr>
+              <td>Parse</td>
+              <td class="t-ms">{{ fmt(timing.parse) }}</td>
+              <td class="t-pct">{{ pct(timing.parse) }}</td>
+            </tr>
+            <tr>
+              <td>Segment BVH</td>
+              <td class="t-ms">{{ fmt(timing.segBvh) }}</td>
+              <td class="t-pct">{{ pct(timing.segBvh) }}</td>
+            </tr>
+            <tr>
+              <td>Ray cull</td>
+              <td class="t-ms">{{ fmt(timing.ray) }}</td>
+              <td class="t-pct">{{ pct(timing.ray) }}</td>
+            </tr>
+            <tr v-if="timing.arc">
+              <td>Arc</td>
+              <td class="t-ms">{{ fmt(timing.arc) }}</td>
+              <td class="t-pct">{{ pct(timing.arc) }}</td>
+            </tr>
+            <tr>
+              <td>Gap</td>
+              <td class="t-ms">{{ fmt(timing.gap) }}</td>
+              <td class="t-pct">{{ pct(timing.gap) }}</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -42,7 +66,8 @@
         <SliderControl label="Fill Light" v-model="fillLightIntensity" :max="3" :step="0.01" :decimals="1" />
         <SliderControl label="Shadow Softness" v-model="shadowSoftness" :min="0.5" :max="6" :step="0.1" :decimals="1" />
         <SliderControl label="Contact Shadows" v-model="contactShadowStrength" :max="1" :step="0.01" />
-        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="0.5" :step="0.001" :decimals="3" />
+        <SliderControl label="Contact Dist" v-model="contactShadowDist" :min="0" :max="0.5" :step="0.001"
+          :decimals="3" />
         <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="1" :step="0.01" />
         <SliderControl label="SSAO Radius" v-model="ssaoRadius" :min="0" :max="1" :step="0.01" :decimals="2" />
         <SliderControl label="Arc Curvature" v-model="arcCurvature" :min="0.1" :max="1" :step="0.01" :decimals="2" />
@@ -76,28 +101,13 @@
     </div>
     <div class="resize-handle" @mousedown="startResize" @touchstart.prevent="startResize" />
     <div class="viewer" :style="isMobile() ? { height: viewerPercent + '%' } : undefined">
-      <ModelViewer
-        :segbinUrl="segbinUrl"
-        :roughness="roughness"
-        :metalness="metalness"
-        :envIntensity="envIntensity"
-        :specularStrength="specularStrength"
-        :ambientStrength="ambientStrength"
-        :baseColorTint="baseColorTint"
-        :envMapUrl="envMapUrl"
-        :ssaoEnabled="ssaoEnabled"
-        :roleColors="roleColors"
-        :shadowSoftness="shadowSoftness"
-        :keyLightIntensity="keyLightIntensity"
-        :fillLightIntensity="fillLightIntensity"
-        :contactShadowDist="contactShadowDist"
-        :contactShadowStrength="contactShadowStrength"
-        :ssaoIntensity="ssaoIntensity"
-        :ssaoRadius="ssaoRadius"
-        :arcCurvature="arcCurvature"
-        :debugPreview="debugPreview"
-        @model-loaded="onModelLoaded"
-      />
+      <ModelViewer :segbinUrl="segbinUrl" :roughness="roughness" :metalness="metalness" :envIntensity="envIntensity"
+        :specularStrength="specularStrength" :ambientStrength="ambientStrength" :baseColorTint="baseColorTint"
+        :envMapUrl="envMapUrl" :ssaoEnabled="ssaoEnabled" :roleColors="roleColors" :shadowSoftness="shadowSoftness"
+        :keyLightIntensity="keyLightIntensity" :fillLightIntensity="fillLightIntensity"
+        :contactShadowDist="contactShadowDist" :contactShadowStrength="contactShadowStrength"
+        :ssaoIntensity="ssaoIntensity" :ssaoRadius="ssaoRadius" :arcCurvature="arcCurvature"
+        :debugPreview="debugPreview" @model-loaded="onModelLoaded" />
       <div v-show="!segbinUrl" class="placeholder">
         Upload a 3D model to see the interactive preview
       </div>
@@ -334,86 +344,263 @@ const uploadModel = async (event: Event) => {
   }
 }
 
-* { margin: 0; padding: 0; box-sizing: border-box; }
-html, body, #app { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--app-bg); color: var(--app-text); }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
 
-.app { display: flex; height: 100vh; }
+html,
+body,
+#app {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app {
+  display: flex;
+  height: 100vh;
+}
 
 .sidebar {
-  min-width: 220px; padding: 20px; border-right: 1px solid var(--app-border);
-  background: var(--app-bg); overflow-y: auto; flex-shrink: 0;
+  min-width: 220px;
+  padding: 20px;
+  border-right: 1px solid var(--app-border);
+  background: var(--app-bg);
+  overflow-y: auto;
+  flex-shrink: 0;
 }
-.sidebar h3 { margin-bottom: 16px; color: var(--app-text); }
 
-.builtin-buttons { display: flex; gap: 6px; margin-bottom: 8px; }
+.sidebar h3 {
+  margin-bottom: 16px;
+  color: var(--app-text);
+}
+
+.builtin-buttons {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
 .builtin-buttons button {
-  flex: 1; padding: 6px 10px; border: 1px solid var(--app-border-light);
-  border-radius: 4px; background: var(--app-input-bg); color: var(--app-input-text);
-  cursor: pointer; font-size: 13px;
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--app-border-light);
+  border-radius: 4px;
+  background: var(--app-input-bg);
+  color: var(--app-input-text);
+  cursor: pointer;
+  font-size: 13px;
 }
-.builtin-buttons button:hover:not(:disabled) { filter: brightness(1.2); }
-.builtin-buttons button:disabled { opacity: 0.5; cursor: default; }
 
-.builtin-divider { margin: 8px 0 6px; font-size: 12px; color: var(--app-text-muted); }
-.sidebar h4 { margin: 10px 0 4px; color: var(--app-text-secondary); font-size: 13px; }
+.builtin-buttons button:hover:not(:disabled) {
+  filter: brightness(1.2);
+}
+
+.builtin-buttons button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.builtin-divider {
+  margin: 8px 0 6px;
+  font-size: 12px;
+  color: var(--app-text-muted);
+}
+
+.sidebar h4 {
+  margin: 10px 0 4px;
+  color: var(--app-text-secondary);
+  font-size: 13px;
+}
 
 .sidebar input[type="file"] {
-  width: 100%; padding: 8px 10px; border: 1px solid var(--app-border-light);
-  border-radius: 4px; font-size: 13px; background: var(--app-input-bg);
-  color: var(--app-input-text); cursor: pointer;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--app-border-light);
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--app-input-bg);
+  color: var(--app-input-text);
+  cursor: pointer;
 }
 
 #material-controls label {
-  display: block; margin-top: 4px; color: var(--app-text-secondary);
+  display: block;
+  margin-top: 4px;
+  color: var(--app-text-secondary);
   font-size: 12px;
 }
-#material-controls label span {
-  float: right; color: var(--app-text-muted);
-}
-#material-controls input[type="range"]:not(.slider-input) {
-  width: 100%; margin: 1px 0 2px; height: 14px;
-}
+
 #material-controls .color-picker {
-  width: 100%; height: 26px; padding: 1px; border: 1px solid var(--app-border-light);
-  border-radius: 3px; background: var(--app-input-bg); cursor: pointer;
+  width: 50%;
+  height: 26px;
+  padding: 1px;
+  border: 1px solid var(--app-border-light);
+  border-radius: 3px;
+  background: var(--app-input-bg);
+  cursor: pointer;
   box-sizing: border-box;
 }
+
 .renderer-select {
-  width: 100%; padding: 5px 6px; margin-bottom: 4px;
-  border: 1px solid var(--app-border-light); border-radius: 4px;
-  background: var(--app-input-bg); color: var(--app-input-text);
-  font-size: 13px; cursor: pointer;
+  /* width: 100%; */
+  padding: 5px 6px;
+  margin-bottom: 4px;
+  border: 1px solid var(--app-border-light);
+  border-radius: 4px;
+  background: var(--app-input-bg);
+  color: var(--app-input-text);
+  font-size: 13px;
+  cursor: pointer;
 }
+
 .renderer-select option:disabled {
   color: var(--app-text-muted);
 }
 
-.status { margin-top: 12px; padding: 8px 12px; background: var(--app-status-bg); border-radius: 4px; color: var(--app-status-text); font-size: 14px; }
-.status.error { background: var(--app-status-error-bg); color: var(--app-status-error-text); }
-.timing-table { font-size: 12px; opacity: 0.8; margin-top: 4px; width: 100%; border-collapse: collapse; }
-.timing-table td { padding: 1px 4px; }
-.timing-table td:first-child { padding-left: 0; }
-.t-ms { text-align: right; font-variant-numeric: tabular-nums; width: 60px; }
-.t-pct { text-align: right; width: 48px; color: var(--app-text-muted); }
+.status {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: var(--app-status-bg);
+  border-radius: 4px;
+  color: var(--app-status-text);
+  font-size: 14px;
+}
 
-.resize-handle { width: 4px; cursor: col-resize; background: var(--app-border); flex-shrink: 0; }
-.resize-handle:hover { background: var(--app-text-muted); }
+.status.error {
+  background: var(--app-status-error-bg);
+  color: var(--app-status-error-text);
+}
 
-.viewer { flex: 1; position: relative; min-width: 0; background: var(--app-bg); overscroll-behavior: none; touch-action: none; overflow: hidden; }
-.placeholder { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--app-text-muted); font-size: 18px; padding: 20px; text-align: center; }
+.timing-table {
+  font-size: 12px;
+  opacity: 0.8;
+  margin-top: 4px;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.timing-table td {
+  padding: 1px 4px;
+}
+
+.timing-table td:first-child {
+  padding-left: 0;
+}
+
+.t-ms {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 60px;
+}
+
+.t-pct {
+  text-align: right;
+  width: 48px;
+  color: var(--app-text-muted);
+}
+
+.resize-handle {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--app-border);
+  flex-shrink: 0;
+}
+
+.resize-handle:hover {
+  background: var(--app-text-muted);
+}
+
+.viewer {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  background: var(--app-bg);
+  overscroll-behavior: none;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--app-text-muted);
+  font-size: 18px;
+  padding: 20px;
+  text-align: center;
+}
 
 @media (max-width: 768px) {
-  .app { flex-direction: column; }
-  .sidebar { width: 100% !important; flex: 1; overflow-y: auto; border-right: none; border-top: 1px solid var(--app-border); padding: 12px; }
-  .sidebar h3 { margin-bottom: 10px; }
-  .viewer { flex: none; }
-  .resize-handle { width: 100%; height: 12px; cursor: row-resize; position: relative; display: flex; align-items: center; justify-content: center; background: transparent; }
-  .resize-handle::after { content: ''; display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--app-border); }
-  #material-controls { display: flex; flex-wrap: wrap; gap: 4px; }
-  #material-controls h4 { width: 100%; margin-top: 0; }
-  #material-controls > label:not(.checkbox-label) { flex: 0 0 48%; }
-  #material-controls > input[type="range"] { flex: 0 0 48%; }
-  .builtin-buttons { flex-wrap: wrap; }
-  .status { margin-top: 6px; }
+  .app {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100% !important;
+    flex: 1;
+    overflow-y: auto;
+    border-right: none;
+    border-top: 1px solid var(--app-border);
+    padding: 12px;
+  }
+
+  .sidebar h3 {
+    margin-bottom: 10px;
+  }
+
+  .viewer {
+    flex: none;
+  }
+
+  .resize-handle {
+    width: 100%;
+    height: 12px;
+    cursor: row-resize;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+  }
+
+  .resize-handle::after {
+    content: '';
+    display: block;
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--app-border);
+  }
+
+  #material-controls {
+    display: flex;
+    flex-wrap: wrap;
+  }
+
+  #material-controls h4 {
+    width: 100%;
+    margin-top: 0;
+  }
+
+  #material-controls>label:not(.checkbox-label) {
+    flex: 0 0 48%;
+  }
+
+  #material-controls>input[type="range"] {
+    flex: 0 0 48%;
+  }
+
+  .builtin-buttons {
+    flex-wrap: wrap;
+  }
+
+  .status {
+    margin-top: 6px;
+  }
 }
 </style>
