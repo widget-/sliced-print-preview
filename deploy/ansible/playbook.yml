@@ -1,0 +1,399 @@
+---
+# ──────────────────────────────────────────────
+# Provision sliced-print-preview on Oracle Cloud ARM VM
+# ──────────────────────────────────────────────
+# Usage:
+#   1. cd deploy/ansible
+#   2. ansible-playbook -i inventory.yml playbook.yml
+#
+# Pre-requisites on the controller (your machine):
+#   - Ansible >= 2.15 (pip install ansible or nix-shell -p ansible)
+#   - SSH agent loaded with your OCI key: ssh-add ~/.ssh/<oci-key>
+#   - SSH reachable via `o` alias
+#   - Deploy key generated at ~/.ssh/sliced-print-preview-deploy-key
+#     (run deploy/setup-deploy-key.sh and add pub key to GitHub)
+# ──────────────────────────────────────────────
+- name: Provision sliced-print-preview
+  hosts: sliced-preview
+  become: yes
+  vars:
+    # ── Domain / TLS ──
+    domain: ~                    # set to e.g. "preview.example.com" for certbot
+    admin_email: ~                # required for certbot if domain is set
+
+    # ── App paths ──
+    app_user: ubuntu
+    app_group: ubuntu
+    repo_dir: "/home/{{ app_user }}/sliced-print-preview"
+    app_port: 3000
+
+    # ── OrcaSlicer ──
+    orca_version: "2.4.1"
+    orca_appimage: "OrcaSlicer_Linux_AppImage_Ubuntu2404_aarch64_V{{ orca_version }}.AppImage"
+    orca_download_url: "https://github.com/SoftFever/OrcaSlicer/releases/download/v{{ orca_version }}/{{ orca_appimage }}"
+    orca_install_dir: "/opt/orca-slicer"
+
+    # ── Rust ──
+    rust_version: "stable"
+
+  tasks:
+    # ──────────────────────────────────────────
+    # 1. System packages
+    # ──────────────────────────────────────────
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install system packages
+      apt:
+        name:
+          - curl
+          - git
+          - unzip
+          - fuse
+          - libfuse2
+          - nginx
+          - certbot
+          - python3-certbot-nginx
+          - iptables-persistent
+          - build-essential
+          - pkg-config
+          - libssl-dev
+          - libfontconfig1
+          - libopengl0
+          - libglu1-mesa
+          - libwebkit2gtk-4.1-dev
+        state: present
+
+    # ──────────────────────────────────────────
+    # 2. Bun
+    # ──────────────────────────────────────────
+    - name: Check if bun is installed
+      command: which bun
+      register: bun_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Bun
+      shell: curl -fsSL https://bun.sh/install | bash
+      args:
+        creates: "/home/{{ app_user }}/.bun/bin/bun"
+      when: bun_check.rc != 0
+      become_user: "{{ app_user }}"
+      become: yes
+
+    - name: Add bun to global PATH for all users
+      copy:
+        dest: /etc/profile.d/bun.sh
+        content: |
+          export BUN_INSTALL="/home/{{ app_user }}/.bun"
+          export PATH="$BUN_INSTALL/bin:$PATH"
+        mode: 0644
+
+    # ──────────────────────────────────────────
+    # 3. Rust via rustup
+    # ──────────────────────────────────────────
+    - name: Check if rustc is installed
+      command: which rustc
+      register: rust_check
+      failed_when: false
+      changed_when: false
+
+    - name: Install Rust (rustup)
+      shell: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+      args:
+        creates: "/home/{{ app_user }}/.cargo/bin/rustc"
+      when: rust_check.rc != 0
+      become_user: "{{ app_user }}"
+      become: yes
+
+    - name: Add cargo to global PATH
+      copy:
+        dest: /etc/profile.d/rust.sh
+        content: |
+          export CARGO_HOME="/home/{{ app_user }}/.cargo"
+          export PATH="$CARGO_HOME/bin:$PATH"
+        mode: 0644
+
+    # ──────────────────────────────────────────
+    # 4. OrcaSlicer (ARM64 AppImage)
+    # ──────────────────────────────────────────
+    - name: Create OrcaSlicer install directory
+      file:
+        path: "{{ orca_install_dir }}"
+        state: directory
+        mode: 0755
+
+    - name: Download OrcaSlicer AppImage
+      get_url:
+        url: "{{ orca_download_url }}"
+        dest: "/tmp/{{ orca_appimage }}"
+        mode: 0755
+      register: orca_downloaded
+
+    - name: Extract OrcaSlicer AppImage
+      shell: |
+        cd /tmp
+        ./{{ orca_appimage }} --appimage-extract
+        rm -rf {{ orca_install_dir }}/squashfs-root
+        mv squashfs-root {{ orca_install_dir }}/squashfs-root
+      when: orca_downloaded.changed
+      args:
+        creates: "{{ orca_install_dir }}/squashfs-root"
+
+    - name: Symlink orca-slicer binary
+      file:
+        src: "{{ orca_install_dir }}/squashfs-root/AppRun"
+        dest: "/usr/local/bin/orca-slicer"
+        state: link
+
+    - name: Verify OrcaSlicer works
+      command: orca-slicer --help
+      register: orca_verify
+      changed_when: false
+      failed_when: orca_verify.rc > 1
+
+    # ──────────────────────────────────────────
+    # 5. Deploy key for git clone
+    # ──────────────────────────────────────────
+    - name: Ensure .ssh directory exists for app user
+      file:
+        path: "/home/{{ app_user }}/.ssh"
+        state: directory
+        mode: 0700
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+
+    - name: Copy deploy key to target
+      copy:
+        src: "{{ lookup('env', 'HOME') }}/.ssh/sliced-print-preview-deploy-key"
+        dest: "/home/{{ app_user }}/.ssh/sliced-print-preview-deploy-key"
+        mode: 0600
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+      # If the key doesn't exist locally, this task will fail with a clear error
+
+    - name: Configure SSH to use deploy key for GitHub
+      blockinfile:
+        path: "/home/{{ app_user }}/.ssh/config"
+        create: yes
+        mode: 0600
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        block: |
+          Host github.com
+            HostName github.com
+            User git
+            IdentityFile ~/.ssh/sliced-print-preview-deploy-key
+            StrictHostKeyChecking accept-new
+
+    # ──────────────────────────────────────────
+    # 6. Clone / pull repository
+    # ──────────────────────────────────────────
+    - name: Clone or pull repository
+      git:
+        repo: git@github.com:widget-/sliced-print-preview.git
+        dest: "{{ repo_dir }}"
+        version: main
+        accept_hostkey: yes
+        force: yes
+      become_user: "{{ app_user }}"
+      become: yes
+      register: repo_clone
+
+    # ──────────────────────────────────────────
+    # 7. Build Rust CLI (gcode-to-segbin)
+    # ──────────────────────────────────────────
+    - name: Build gcode-to-segbin (release)
+      command: >
+        cargo build --release
+      args:
+        chdir: "{{ repo_dir }}/packages/gcode-to-segbin"
+      become_user: "{{ app_user }}"
+      become: yes
+      environment:
+        CARGO_HOME: "/home/{{ app_user }}/.cargo"
+        PATH: "/home/{{ app_user }}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      # This takes a while (5-15 min on ARM)
+      # Set ANSIBLE_TIMEOUT=60 in your env if it times out
+      timeout: 1200
+
+    # ──────────────────────────────────────────
+    # 8. Build frontend
+    # ──────────────────────────────────────────
+    - name: Install frontend dependencies
+      command: bun install
+      args:
+        chdir: "{{ repo_dir }}/packages/frontend"
+      become_user: "{{ app_user }}"
+      become: yes
+      environment:
+        BUN_INSTALL: "/home/{{ app_user }}/.bun"
+        PATH: "/home/{{ app_user }}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      register: frontend_install
+
+    - name: Build frontend
+      command: bun run build
+      args:
+        chdir: "{{ repo_dir }}/packages/frontend"
+      become_user: "{{ app_user }}"
+      become: yes
+      environment:
+        BUN_INSTALL: "/home/{{ app_user }}/.bun"
+        PATH: "/home/{{ app_user }}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    # ──────────────────────────────────────────
+    # 9. Build backend
+    # ──────────────────────────────────────────
+    - name: Install backend dependencies
+      command: bun install
+      args:
+        chdir: "{{ repo_dir }}/packages/backend"
+      become_user: "{{ app_user }}"
+      become: yes
+      environment:
+        BUN_INSTALL: "/home/{{ app_user }}/.bun"
+        PATH: "/home/{{ app_user }}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    - name: Build backend
+      command: bun run build
+      args:
+        chdir: "{{ repo_dir }}/packages/backend"
+      become_user: "{{ app_user }}"
+      become: yes
+      environment:
+        BUN_INSTALL: "/home/{{ app_user }}/.bun"
+        PATH: "/home/{{ app_user }}/.bun/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    # ──────────────────────────────────────────
+    # 10. Environment file
+    # ──────────────────────────────────────────
+    - name: Create .env file for backend
+      copy:
+        dest: "{{ repo_dir }}/packages/backend/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+        mode: 0600
+        content: |
+          PORT={{ app_port }}
+          UPLOAD_DIR=/tmp/print-preview-uploads
+          OUTPUT_DIR=/tmp/print-preview-output
+          ORCA_SLICER_BIN=/usr/local/bin/orca-slicer
+          ORCA_RESOURCES_DIR={{ orca_install_dir }}/squashfs-root/resources
+          GCODE_TO_SEGBIN_BIN={{ repo_dir }}/packages/gcode-to-segbin/target/release/gcode-to-segbin
+          NODE_ENV=production
+
+    # ──────────────────────────────────────────
+    # 11. systemd service
+    # ──────────────────────────────────────────
+    - name: Install systemd service
+      copy:
+        src: sliced-print-preview.service
+        dest: /etc/systemd/system/sliced-print-preview.service
+        mode: 0644
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start sliced-print-preview service
+      systemd:
+        name: sliced-print-preview
+        enabled: yes
+        state: started
+      register: service_started
+
+    # ──────────────────────────────────────────
+    # 12. nginx reverse proxy
+    # ──────────────────────────────────────────
+    - name: Create upload and output directories with proper permissions
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: 0755
+        owner: "{{ app_user }}"
+        group: "{{ app_group }}"
+      loop:
+        - /tmp/print-preview-uploads
+        - /tmp/print-preview-output
+
+    # ── Open firewall ports for nginx (Oracle Cloud images block all non-SSH) ──
+    - name: Allow HTTP (80) in iptables
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 80
+        jump: ACCEPT
+        comment: HTTP for certbot
+      register: iptables_http
+
+    - name: Allow HTTPS (443) in iptables
+      iptables:
+        chain: INPUT
+        protocol: tcp
+        destination_port: 443
+        jump: ACCEPT
+        comment: HTTPS
+      register: iptables_https
+
+    - name: Save iptables rules (persist across reboot)
+      shell: netfilter-persistent save
+      when: iptables_http.changed or iptables_https.changed
+
+    - name: Install nginx site config
+      template:
+        src: nginx.conf.j2
+        dest: /etc/nginx/sites-available/sliced-print-preview
+        mode: 0644
+      notify: reload nginx
+
+    - name: Enable nginx site
+      file:
+        src: /etc/nginx/sites-available/sliced-print-preview
+        dest: /etc/nginx/sites-enabled/sliced-print-preview
+        state: link
+      notify: reload nginx
+
+    - name: Disable default nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: reload nginx
+
+    # ──────────────────────────────────────────
+    # 13. TLS via certbot (optional)
+    # ──────────────────────────────────────────
+    - name: Obtain TLS certificate (if domain configured)
+      command: >
+        certbot --nginx -d {{ domain }} --non-interactive --agree-tos
+        --email {{ admin_email }} --redirect
+      when: domain is not none and admin_email is not none
+      notify: reload nginx
+
+    # ──────────────────────────────────────────
+    # 14. Final checks
+    # ──────────────────────────────────────────
+    - name: Wait for backend to be ready
+      uri:
+        url: "http://localhost:{{ app_port }}/"
+        status_code: [200, 302, 404]
+      register: backend_health
+      retries: 12
+      delay: 5
+      until: backend_health.status in [200, 302, 404]
+
+    - name: Print success
+      debug:
+        msg: >
+          ✅ Deployment complete!
+          {% if domain %}https://{{ domain }}{% else %}
+          Backend running on http://localhost:{{ app_port }}
+          (configure a domain and re-run with domain= set for TLS)
+          {% endif %}
+
+  handlers:
+    - name: reload nginx
+      service:
+        name: nginx
+        state: reloaded

@@ -1,0 +1,8 @@
+---
+all:
+  hosts:
+    sliced-preview:
+      ansible_host: o
+      ansible_user: ubuntu      # default OCI Ubuntu image user
+      # ansible_user: opc       # uncomment for Oracle Linux
+      ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=60s'

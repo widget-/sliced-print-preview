@@ -1,0 +1,27 @@
+[Unit]
+Description=sliced-print-preview backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/sliced-print-preview/packages/backend
+ExecStart=/home/ubuntu/.bun/bin/bun run dist/index.js
+EnvironmentFile=/home/ubuntu/sliced-print-preview/packages/backend/.env
+
+# Restart on failure
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+# Upload/output dirs need write access (shared with nginx)
+ReadWritePaths=/tmp/print-preview-uploads /tmp/print-preview-output
+
+[Install]
+WantedBy=multi-user.target
