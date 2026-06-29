@@ -12,6 +12,9 @@ pkgs.mkShell {
     cargo
     rustc
 
+    # --- Deployment ---
+    ansible
+
     # --- Utilities ---
     git
   ];
