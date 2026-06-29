@@ -113,7 +113,7 @@ fn run() -> Result<(), String> {
 
     let arc_start = std::time::Instant::now();
     let before_arc = parser.segments.len();
-    arcs::apply_arc_subdivision(&mut parser.segments, 10.0, 3.0);
+    arcs::apply_arc_subdivision(&mut parser.segments, 5.0, 3.0);
     let arc_count = parser.segments.len() - before_arc;
     let arc_ms = arc_start.elapsed();
     if arc_count > 0 {

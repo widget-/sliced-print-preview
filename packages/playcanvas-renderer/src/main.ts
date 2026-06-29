@@ -87,12 +87,33 @@ function packSegmentData(data: SegbinData): Float32Array {
 }
 
 function packCapData(data: SegbinData, visSegments: Float32Array): Float32Array {
-  // Count non-arc segments (each gets 2 caps: start + end)
+  // Cap only at extrusion chain boundaries (chainContinue[i]===0 starts a new chain)
+  // and never on arc segments. This dramatically reduces cap geometry.
   const segCount = visSegments.length / SEG_FLOATS;
+  const n = data.count;
+
+  // Build reverse mapping: visible segment index → original data index
+  const visToOrig = new Int32Array(segCount);
+  {
+    let vi = 0;
+    for (let i = 0; i < n; i++) {
+      if (data.roles[i] !== 10 && data.roles[i] !== 13) {
+        if (vi < segCount) visToOrig[vi] = i;
+        vi++;
+      }
+    }
+  }
+
+  // Count caps needed
   let capCount = 0;
   for (let si = 0; si < segCount; si++) {
     const isArc = visSegments[si * SEG_FLOATS + 11] > 0.5;
-    if (!isArc) capCount += 2;
+    if (isArc) continue;
+    const oi = visToOrig[si];
+    const needsStart = data.chainContinue[oi] === 0;
+    const needsEnd = si + 1 >= segCount || data.chainContinue[visToOrig[si + 1]] === 0;
+    if (needsStart) capCount++;
+    if (needsEnd) capCount++;
   }
 
   const out = new Float32Array(capCount * CAP_FLOATS);
@@ -101,22 +122,23 @@ function packCapData(data: SegbinData, visSegments: Float32Array): Float32Array 
     const isArc = visSegments[si * SEG_FLOATS + 11] > 0.5;
     if (isArc) continue;
 
-    for (let end = 0; end < 2; end++) {
-      const isEnd = end === 1 ? 1.0 : 0.0;
+    const oi = visToOrig[si];
+    const needsStart = data.chainContinue[oi] === 0;
+    const needsEnd = si + 1 >= segCount || data.chainContinue[visToOrig[si + 1]] === 0;
+
+    const emitCap = (isEnd: number) => {
       const srcOff = si * SEG_FLOATS;
       const dstOff = ci * CAP_FLOATS;
       ci++;
-
-      // Copy full segment data (ATTR12-13, ATTR15)
-      for (let j = 0; j < 8; j++) out[dstOff + j] = visSegments[srcOff + j];     // ATTR12 + ATTR13
-      for (let j = 12; j < 16; j++) out[dstOff + j] = visSegments[srcOff + j];    // ATTR15
-
-      // ATTR14: color.rgb + isEnd
-      out[dstOff + 8] = visSegments[srcOff + 8];  // r
-      out[dstOff + 9] = visSegments[srcOff + 9];  // g
-      out[dstOff + 10] = visSegments[srcOff + 10]; // b
+      for (let j = 0; j < 8; j++) out[dstOff + j] = visSegments[srcOff + j];
+      for (let j = 12; j < 16; j++) out[dstOff + j] = visSegments[srcOff + j];
+      out[dstOff + 8] = visSegments[srcOff + 8];
+      out[dstOff + 9] = visSegments[srcOff + 9];
+      out[dstOff + 10] = visSegments[srcOff + 10];
       out[dstOff + 11] = isEnd;
-    }
+    };
+    if (needsStart) emitCap(0);
+    if (needsEnd) emitCap(1);
   }
   return out;
 }
