@@ -87,26 +87,36 @@ function packSegmentData(data: SegbinData): Float32Array {
 }
 
 function packCapData(data: SegbinData, visSegments: Float32Array): Float32Array {
-  // 2 caps per segment (start + end), each with full segment data + isEnd flag
+  // Count non-arc segments (each gets 2 caps: start + end)
   const segCount = visSegments.length / SEG_FLOATS;
-  const capCount = segCount * 2;
+  let capCount = 0;
+  for (let si = 0; si < segCount; si++) {
+    const isArc = visSegments[si * SEG_FLOATS + 11] > 0.5;
+    if (!isArc) capCount += 2;
+  }
+
   const out = new Float32Array(capCount * CAP_FLOATS);
+  let ci = 0;
+  for (let si = 0; si < segCount; si++) {
+    const isArc = visSegments[si * SEG_FLOATS + 11] > 0.5;
+    if (isArc) continue;
 
-  for (let ci = 0; ci < capCount; ci++) {
-    const segIdx = Math.floor(ci / 2);
-    const isEnd = (ci % 2 === 1) ? 1.0 : 0.0;
-    const srcOff = segIdx * SEG_FLOATS;
-    const dstOff = ci * CAP_FLOATS;
+    for (let end = 0; end < 2; end++) {
+      const isEnd = end === 1 ? 1.0 : 0.0;
+      const srcOff = si * SEG_FLOATS;
+      const dstOff = ci * CAP_FLOATS;
+      ci++;
 
-    // Copy full segment data (ATTR12-13, ATTR15)
-    for (let j = 0; j < 8; j++) out[dstOff + j] = visSegments[srcOff + j];     // ATTR12 + ATTR13
-    for (let j = 12; j < 16; j++) out[dstOff + j] = visSegments[srcOff + j];    // ATTR15
+      // Copy full segment data (ATTR12-13, ATTR15)
+      for (let j = 0; j < 8; j++) out[dstOff + j] = visSegments[srcOff + j];     // ATTR12 + ATTR13
+      for (let j = 12; j < 16; j++) out[dstOff + j] = visSegments[srcOff + j];    // ATTR15
 
-    // ATTR14: color.rgb + isEnd
-    out[dstOff + 8] = visSegments[srcOff + 8];  // r
-    out[dstOff + 9] = visSegments[srcOff + 9];  // g
-    out[dstOff + 10] = visSegments[srcOff + 10]; // b
-    out[dstOff + 11] = isEnd;
+      // ATTR14: color.rgb + isEnd
+      out[dstOff + 8] = visSegments[srcOff + 8];  // r
+      out[dstOff + 9] = visSegments[srcOff + 9];  // g
+      out[dstOff + 10] = visSegments[srcOff + 10]; // b
+      out[dstOff + 11] = isEnd;
+    }
   }
   return out;
 }
