@@ -2,55 +2,61 @@
   <div ref="container" class="preview-container">
     <canvas ref="canvasEl" class="render-canvas" />
   </div>
-  <table class="stats-overlay">
-    <tr>
-      <td>FPS</td>
-      <td>{{ stats.fps }}</td>
-    </tr>
-    <tr>
-      <td>tris</td>
-      <td>{{ stats.triangles }}k</td>
-    </tr>
-    <tr>
-      <td>S1</td>
-      <td>{{ stats.gpuMs.shadow1 > 0 ? fmtMs(stats.gpuMs.shadow1) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>S2</td>
-      <td>{{ stats.gpuMs.shadow2 > 0 ? fmtMs(stats.gpuMs.shadow2) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>GPU</td>
-      <td>{{ stats.gpuMs.offscreen > 0 ? fmtMs(stats.gpuMs.offscreen) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>CS</td>
-      <td>{{ stats.gpuMs.contactShadow > 0 ? fmtMs(stats.gpuMs.contactShadow) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>SSAO</td>
-      <td>{{ stats.gpuMs.ssao > 0 ? fmtMs(stats.gpuMs.ssao) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>blur</td>
-      <td>{{ stats.gpuMs.blur > 0 ? fmtMs(stats.gpuMs.blur) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>vel</td>
-      <td>{{ stats.gpuMs.velocity > 0 ? fmtMs(stats.gpuMs.velocity) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>TAA</td>
-      <td>{{ stats.gpuMs.taa > 0 ? fmtMs(stats.gpuMs.taa) : '--' }}</td>
-    </tr>
-    <tr>
-      <td>frame</td>
-      <td>{{ fmtMs(stats.gpuMs.frameMs) }}</td>
-    </tr>
-    <tr>
-      <td colspan="2"><label class="keepalive-label"><input type="checkbox" v-model="keepAliveLocal" /> Keep alive</label></td>
-    </tr>
-  </table>
+  <div class="stats-overlay">
+    <details>
+      <summary>Stats</summary>
+      <table>
+        <tr>
+          <td>FPS</td>
+          <td>{{ stats.fps }}</td>
+        </tr>
+        <tr>
+          <td>tris</td>
+          <td>{{ stats.triangles }}k</td>
+        </tr>
+        <tr>
+          <td>S1</td>
+          <td>{{ stats.gpuMs.shadow1 > 0 ? fmtMs(stats.gpuMs.shadow1) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>S2</td>
+          <td>{{ stats.gpuMs.shadow2 > 0 ? fmtMs(stats.gpuMs.shadow2) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>GPU</td>
+          <td>{{ stats.gpuMs.offscreen > 0 ? fmtMs(stats.gpuMs.offscreen) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>CS</td>
+          <td>{{ stats.gpuMs.contactShadow > 0 ? fmtMs(stats.gpuMs.contactShadow) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>SSAO</td>
+          <td>{{ stats.gpuMs.ssao > 0 ? fmtMs(stats.gpuMs.ssao) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>blur</td>
+          <td>{{ stats.gpuMs.blur > 0 ? fmtMs(stats.gpuMs.blur) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>vel</td>
+          <td>{{ stats.gpuMs.velocity > 0 ? fmtMs(stats.gpuMs.velocity) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>TAA</td>
+          <td>{{ stats.gpuMs.taa > 0 ? fmtMs(stats.gpuMs.taa) : '--' }}</td>
+        </tr>
+        <tr>
+          <td>frame</td>
+          <td>{{ fmtMs(stats.gpuMs.frameMs) }}</td>
+        </tr>
+        <tr>
+          <td colspan="2"><label class="keepalive-label"><input type="checkbox" v-model="keepAliveLocal" /> Keep
+              alive</label></td>
+        </tr>
+      </table>
+    </details>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -293,16 +299,26 @@ onBeforeUnmount(() => {
   color: white;
   font: 10px / 1.5 monospace;
   background: rgba(0, 0, 0, 0.6);
-  pointer-events: none;
-  border-collapse: collapse;
   border-radius: 16px;
-  padding: 0;
-  border-collapse: collapse;
   border: 5px solid transparent;
+  pointer-events: none;
+}
+.stats-overlay summary {
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 8px;
+  pointer-events: auto;
+}
+.stats-overlay table {
+  border-collapse: collapse;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
 }
 .stats-overlay td:nth-child(2) {
   color: #acf;
 }
+
 .stats-overlay .keepalive-label {
   pointer-events: auto;
   cursor: pointer;
@@ -311,6 +327,7 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   margin-bottom: 2px;
 }
+
 .stats-overlay .keepalive-label input {
   vertical-align: middle;
 }
