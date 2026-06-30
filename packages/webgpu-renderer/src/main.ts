@@ -189,16 +189,18 @@ export class WebGPURenderer implements Renderer {
     this._startLoop();
   }
 
-  resize(): void {
+  resize(cssW?: number, cssH?: number): void {
     if (!this.context || !this._mounted) return;
     const canvas = this.context.canvas as HTMLCanvasElement;
-    const cssW = canvas.clientWidth;
-    const cssH = canvas.clientHeight;
-    if (cssW === 0 || cssH === 0) return;
+    // Use caller-provided dimensions (from ResizeObserver on container)
+    // falling back to canvas.clientWidth which tracks CSS layout size.
+    const cw = cssW ?? canvas.clientWidth;
+    const ch = cssH ?? canvas.clientHeight;
+    if (cw === 0 || ch === 0) return;
 
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const physW = Math.round(cssW * dpr);
-    const physH = Math.round(cssH * dpr);
+    const physW = Math.round(cw * dpr);
+    const physH = Math.round(ch * dpr);
 
     // Only resize if physical dimensions actually changed
     if (canvas.width !== physW || canvas.height !== physH) {
@@ -206,8 +208,8 @@ export class WebGPURenderer implements Renderer {
       canvas.height = physH;
     }
     // Keep CSS size at logical pixels so the canvas isn't shrunk by the buffer
-    canvas.style.width = `${cssW}px`;
-    canvas.style.height = `${cssH}px`;
+    canvas.style.width = `${cw}px`;
+    canvas.style.height = `${ch}px`;
 
     // Resize SSAO textures using physical pixel size
     this.pipeline.resizeSSAO(canvas.width, canvas.height);
@@ -215,6 +217,7 @@ export class WebGPURenderer implements Renderer {
     // Update camera for new aspect ratio
     this.camera.update(canvas.width / canvas.height);
     this.pipeline.writeCameraUBO(this.camera);
+    this._startLoop();
   }
 
   dispose(): void {

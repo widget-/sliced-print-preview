@@ -110,7 +110,12 @@ watch(() => props.envMapUrl, (url) => {
 // ── Resize ──
 
 function resize() {
-  if (renderer) renderer.resize();
+  if (renderer && container.value) {
+    // Pass container dimensions directly so the renderer doesn't
+    // read stale CSS sizes from the canvas (which has fixed style values
+    // from a previous resize).
+    renderer.resize(container.value.clientWidth, container.value.clientHeight);
+  }
 }
 
 let resizeObserver: ResizeObserver | null = null;
