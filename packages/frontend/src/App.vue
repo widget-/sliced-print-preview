@@ -10,8 +10,8 @@
       <input type="file" @change="uploadModel" accept=".stl" />
       <div v-if="loading" class="status">Processing...</div>
       <div v-if="error" class="status error">{{ error }}</div>
-      <div v-if="timing.api" class="status timing">
-        <div>API: {{ timing.api }}ms · Model: {{ timing.model || '...' }}ms</div>
+      <details v-if="timing.api" class="status timing">
+        <summary>API: {{ timing.api }}ms · Model: {{ timing.model || '...' }}ms</summary>
         <table v-if="timing.slice" class="timing-table">
           <tbody>
             <tr>
@@ -46,7 +46,7 @@
             </tr>
           </tbody>
         </table>
-      </div>
+      </details>
       <div id="material-controls">
         <h4>Render Settings</h4>
         <SliderControl label="Roughness" v-model="roughness" :max="1" :step="0.01" />
