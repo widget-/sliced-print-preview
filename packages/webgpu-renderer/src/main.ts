@@ -16,7 +16,7 @@ export class WebGPURenderer implements Renderer {
   disposeControls!: () => void;
   disposed = false;
   /** Readable stats for the overlay. Written each frame. */
-  stats = { fps: 0, triangles: 0, gpuMs: { offscreen: 0, ssao: 0, blur: 0, velocity: 0, frameMs: 0 } };
+  stats = { fps: 0, triangles: 0, gpuMs: { offscreen: 0, ssao: 0, blur: 0, velocity: 0, frameMs: 0, shadow1: 0, shadow2: 0, contactShadow: 0, taa: 0 } };
   ssaoEnabled = true;
   /** Keep the render loop running even when idle (for benchmarking). */
   keepAlive = false;
@@ -33,7 +33,6 @@ export class WebGPURenderer implements Renderer {
   private _queryResolveBuf?: GPUBuffer;
   private _queryResultBuf?: GPUBuffer;
   private _gpuTiming = false;
-  private _queryIdx = 0;
   /** True while the GPU is still processing a submitted frame. */
   private _frameInFlight = false;
 
@@ -52,7 +51,7 @@ export class WebGPURenderer implements Renderer {
 
     // Set up GPU timestamp queries (requires chrome://flags/#enable-webgpu-developer-features)
     if (hasTimestamp) {
-      const qCount = 8;
+      const qCount = 24;
       this._querySet = device.createQuerySet({ type: 'timestamp', count: qCount });
       this._queryResolveBuf = device.createBuffer({
         size: qCount * 8,
@@ -332,6 +331,10 @@ export class WebGPURenderer implements Renderer {
     // previous frame while we encode the next one (avoids a stall later).
     const _sv = this.context.getCurrentTexture().createView();
 
+    // Initialize GPU timing counter for all render passes this frame
+    this.pipeline._gpuQuerySet = this._gpuTiming ? this._querySet : undefined;
+    this.pipeline._gpuQueryIdx = 0;
+
     // Shadow map render pass (always, regardless of SSAO)
     // Recompute shadow VPs each frame so changes to lightDir take effect
     this.pipeline.writeShadowVP(this.pipeline.lightDir[0], this.pipeline.lightDir[1], this.pipeline.lightDir[2], this.pipeline.shadowVPBuf);
@@ -339,16 +342,12 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.renderShadowMap(encoder);
     this.pipeline.renderShadowMap2(encoder);
 
-    if (this._gpuTiming) {
-      this._queryIdx = 0;
-    }
-
     // Offscreen render pass (scene → offscreen color + depth32float)
     {
       const tsWrite: GPURenderPassTimestampWrites | undefined = this._gpuTiming ? {
         querySet: this._querySet!,
-        beginningOfPassWriteIndex: this._queryIdx++,
-        endOfPassWriteIndex: this._queryIdx++,
+        beginningOfPassWriteIndex: this.pipeline._gpuQueryIdx++,
+        endOfPassWriteIndex: this.pipeline._gpuQueryIdx++,
       } : undefined;
       const offPass = encoder.beginRenderPass({
         timestampWrites: tsWrite,
@@ -383,17 +382,13 @@ export class WebGPURenderer implements Renderer {
 
     // SSAO compute pass + blur (only when enabled)
     if (this.ssaoEnabled) {
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchSSAO(encoder);
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchBlur(encoder);
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
     }
 
     // ── Velocity pass (screen-space motion) ──
     // Always compute velocity when TAA is enabled — needs depth from offscreen pass
     if (this.pipeline.taaEnabled) {
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchVelocity(encoder);
     }
 
@@ -441,38 +436,44 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
-    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
-
     this._frameInFlight = true;
     this.device.queue.submit([encoder.finish()]);
     this.device.queue.onSubmittedWorkDone?.().then(() => { this._frameInFlight = false; });
 
     // Read back GPU timestamps: on first frames after mount/model, and every ~1s when keepAlive is on.
-    const doTiming = this._debugFrames === 1
-      || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1)
+    const doTiming = this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1
       || (this.keepAlive && this._debugFrames % 60 === 0);
     if (this._gpuTiming && doTiming) {
       const qs = this._querySet!;
       const rb = this._queryResolveBuf!;
       const rb2 = this._queryResultBuf!;
       const re = this.device.createCommandEncoder();
-      re.resolveQuerySet(qs, 0, this._queryIdx, rb, 0);
-      re.copyBufferToBuffer(rb, 0, rb2, 0, this._queryIdx * 8);
+      const qCount = this.pipeline._gpuQueryIdx;
+      const capturedPassCount = qCount / 2;
+      re.resolveQuerySet(qs, 0, qCount, rb, 0);
+      re.copyBufferToBuffer(rb, 0, rb2, 0, qCount * 8);
       this.device.queue.submit([re.finish()]);
       rb2.mapAsync(GPUMapMode.READ).then(() => {
         const arr = new BigInt64Array(rb2.getMappedRange());
-        const labels = ['offscreen', 'ssao-start', 'blur-start', 'velocity-start', 'velocity-end', 'frame-end'];
-        for (let i = 0; i < 5; i++) {
-          if (arr[i] === 0n || arr[i+1] === 0n) continue;
-          const ns = Number(arr[i+1] - arr[i]);
+        const allLabels = ['shadow1', 'shadow2', 'offscreen', 'contactShadow', 'ssao', 'blurH', 'blurV', 'velocity', 'taa'];
+        for (let i = 0; i < capturedPassCount && i < allLabels.length; i++) {
+          const begin = arr[i * 2];
+          const end = arr[i * 2 + 1];
+          if (begin === 0n || end === 0n) continue;
+          const ns = Number(end - begin);
           const ms = ns / 1e6;
           if (doTiming && this._debugFrames <= 120) {
-            console.log(`  GPU [${labels[i]}→${labels[i+1]}]: ${ms.toFixed(3)} ms`);
+            console.log(`  GPU [${allLabels[i]}]: ${ms.toFixed(3)} ms`);
           }
-          if (i === 0) this.stats.gpuMs.offscreen = ms;
-          else if (i === 1) this.stats.gpuMs.ssao = ms;
-          else if (i === 2) this.stats.gpuMs.blur = ms;
-          else if (i === 3) this.stats.gpuMs.velocity = ms;
+          const label = allLabels[i];
+          if (label === 'shadow1') this.stats.gpuMs.shadow1 = ms;
+          else if (label === 'shadow2') this.stats.gpuMs.shadow2 = ms;
+          else if (label === 'offscreen') this.stats.gpuMs.offscreen = ms;
+          else if (label === 'contactShadow') this.stats.gpuMs.contactShadow = ms;
+          else if (label === 'ssao') this.stats.gpuMs.ssao = ms;
+          else if (label === 'blurH' || label === 'blurV') this.stats.gpuMs.blur += ms;
+          else if (label === 'velocity') this.stats.gpuMs.velocity = ms;
+          else if (label === 'taa') this.stats.gpuMs.taa = ms;
         }
         rb2.unmap();
       });

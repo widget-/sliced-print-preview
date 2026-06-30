@@ -168,6 +168,11 @@ export class SlicedPipeline {
   groundShadowBG!: GPUBindGroup;
   groundShadowPipe!: GPURenderPipeline;
 
+  /** GPU timestamp query set for pass timing (set each frame from main.ts). */
+  _gpuQuerySet?: GPUQuerySet;
+  /** Mutable query index counter — incremented by each render pass. */
+  _gpuQueryIdx = 0;
+
   material: MaterialUniforms = {
     roughness: 0.65, metalness: 0, envIntensity: 1.0,
     specularStrength: 1, ambientStrength: 0.5,
@@ -1059,6 +1064,7 @@ export class SlicedPipeline {
     d.queue.writeBuffer(this.blurParamsBuf, 0, new Float32Array([1, 0, this.ssaoWidth, this.ssaoHeight]));
     {
       const pass = enc.beginRenderPass({
+        timestampWrites: this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined,
         colorAttachments: [{
           view: this.blurTempTex.createView(),
           loadOp: 'clear',
@@ -1075,6 +1081,7 @@ export class SlicedPipeline {
     d.queue.writeBuffer(this.blurParamsBuf, 0, new Float32Array([0, 1, this.ssaoWidth, this.ssaoHeight]));
     {
       const pass = enc.beginRenderPass({
+        timestampWrites: this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined,
         colorAttachments: [{
           view: this.ssaoOcclusionTex.createView(),
           loadOp: 'clear',
@@ -1135,7 +1142,9 @@ export class SlicedPipeline {
 
   dispatchVelocity(enc: GPUCommandEncoder) {
     if (!this.velocityBG) return;
+    const h = this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined;
     const pass = enc.beginRenderPass({
+      timestampWrites: h,
       colorAttachments: [{ view: this.velocityTex.createView(), loadOp: 'clear', storeOp: 'store' }],
     });
     pass.setPipeline(this.velocityPipe);
@@ -1149,7 +1158,9 @@ export class SlicedPipeline {
     if (!this.taaBG.length) return;
     const readIdx = this._historyIndex;
     const writeIdx = 1 - readIdx;
+    const h = this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined;
     const pass = enc.beginRenderPass({
+      timestampWrites: h,
       colorAttachments: [
         { view: outView, loadOp: 'clear', storeOp: 'store' },
         { view: this.historyTex[writeIdx].createView(), loadOp: 'clear', storeOp: 'store' },
@@ -1194,7 +1205,9 @@ export class SlicedPipeline {
   renderShadowMap(enc: GPUCommandEncoder) {
     if (!this.segmentBuffers) return;
     enc.pushDebugGroup('shadow-map');
+    const h = this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined;
     const pass = enc.beginRenderPass({
+      timestampWrites: h,
       colorAttachments: [],
       depthStencilAttachment: {
         view: this.shadowTex.createView(),
@@ -1219,7 +1232,9 @@ export class SlicedPipeline {
   renderShadowMap2(enc: GPUCommandEncoder) {
     if (!this.segmentBuffers) return;
     enc.pushDebugGroup('shadow-map2');
+    const h = this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined;
     const pass = enc.beginRenderPass({
+      timestampWrites: h,
       colorAttachments: [],
       depthStencilAttachment: {
         view: this.shadowTex2.createView(),
@@ -1240,7 +1255,9 @@ export class SlicedPipeline {
   /** Render screen-space contact shadows (ray-march against depth buffer). */
   renderContactShadow(enc: GPUCommandEncoder) {
     if (!this.contactShadowBG) return;
+    const h = this._gpuQuerySet ? { querySet: this._gpuQuerySet, beginningOfPassWriteIndex: this._gpuQueryIdx++, endOfPassWriteIndex: this._gpuQueryIdx++ } : undefined;
     const pass = enc.beginRenderPass({
+      timestampWrites: h,
       colorAttachments: [{
         view: this.contactShadowTex.createView(),
         loadOp: 'clear',
