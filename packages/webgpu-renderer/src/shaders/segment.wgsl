@@ -20,7 +20,29 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let t: f32 = in.position.z + 0.5;
   let packed: u32 = u32(data.misc.x);
   let isArc: bool = (packed & 1u) != 0u;
-  let width: f32 = data.startPos.w;
+  let endCapNeeded: bool = (packed & 4u) != 0u;
+  let startCapNeeded: bool = (packed & 2u) != 0u;
+  let baseWidth: f32 = data.startPos.w;
+
+  // Width interpolation at chained boundaries: when widths differ across a
+  // chain joint, smoothly taper over the last/first 25% of the segment.
+  var effectiveWidth: f32 = baseWidth;
+  // End transition: lerp toward next segment's width (t > 0.75)
+  if (!endCapNeeded && t > 0.75) {
+    let nextWidth = segments[ii + 1u].startPos.w;
+    if (abs(nextWidth - baseWidth) > 0.0001) {
+      let frac = (t - 0.75) / 0.25;
+      effectiveWidth = mix(baseWidth, nextWidth, frac);
+    }
+  }
+  // Start transition: lerp from previous segment's width (t < 0.25)
+  if (!startCapNeeded && t < 0.25 && ii > 0u) {
+    let prevWidth = segments[ii - 1u].startPos.w;
+    if (abs(prevWidth - baseWidth) > 0.0001) {
+      let frac = (0.25 - t) / 0.25;
+      effectiveWidth = mix(prevWidth, baseWidth, frac);
+    }
+  }
 
   // Evaluate segment position and tangent
   var segPos: vec3<f32>;
@@ -82,8 +104,8 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
   let areaCorrection = 1.1;
   // Local position: map geometry XY to right/up, Z is unused (zero)
   let local = vec3<f32>(
-    in.position.x * width * areaCorrection,
-    in.position.y * width * hScale,
+    in.position.x * effectiveWidth * areaCorrection,
+    in.position.y * effectiveWidth * hScale,
     0.0,
   );
 

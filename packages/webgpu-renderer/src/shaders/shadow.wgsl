@@ -18,8 +18,27 @@ fn vs_shadow(@builtin(instance_index) ii: u32, @location(0) pos: vec3<f32>, @loc
   let conicWeight: f32 = segments[base + 7u]; // endPos.w for arcs
   let packed: u32 = u32(segments[base + 12u]); // misc.x
   let isArc: bool = (packed & 1u) != 0u;
-
+  let endCapNeeded: bool = (packed & 4u) != 0u;
+  let startCapNeeded: bool = (packed & 2u) != 0u;
+  let baseWidth: f32 = width;
   let t: f32 = pos.z + 0.5;
+
+  // Width interpolation at chained boundaries (matches segment.wgsl)
+  var effectiveWidth: f32 = baseWidth;
+  if (!endCapNeeded && t > 0.75) {
+    let nextWidth = segments[base + 16u + 3u];
+    if (abs(nextWidth - baseWidth) > 0.0001) {
+      let frac = (t - 0.75) / 0.25;
+      effectiveWidth = mix(baseWidth, nextWidth, frac);
+    }
+  }
+  if (!startCapNeeded && t < 0.25 && ii > 0u) {
+    let prevWidth = segments[base - 16u + 3u];
+    if (abs(prevWidth - baseWidth) > 0.0001) {
+      let frac = (0.25 - t) / 0.25;
+      effectiveWidth = mix(prevWidth, baseWidth, frac);
+    }
+  }
 
   var segPos: vec3<f32>;
   var tangent: vec3<f32>;
@@ -67,8 +86,8 @@ fn vs_shadow(@builtin(instance_index) ii: u32, @location(0) pos: vec3<f32>, @loc
   let hScale: f32 = 1.25;
   let areaCorrection: f32 = 1.1;
   let worldPos: vec3<f32> = segPos
-    + rightDir * pos.x * width * areaCorrection
-    + upDir * pos.y * width * hScale;
+    + rightDir * pos.x * effectiveWidth * areaCorrection
+    + upDir * pos.y * effectiveWidth * hScale;
   return shadowVP * vec4<f32>(worldPos, 1.0);
 }
 

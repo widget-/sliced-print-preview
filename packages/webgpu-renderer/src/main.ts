@@ -16,8 +16,10 @@ export class WebGPURenderer implements Renderer {
   disposeControls!: () => void;
   disposed = false;
   /** Readable stats for the overlay. Written each frame. */
-  stats = { fps: 0, triangles: 0 };
+  stats = { fps: 0, triangles: 0, gpuMs: { offscreen: 0, ssao: 0, blur: 0, velocity: 0, frameMs: 0 } };
   ssaoEnabled = true;
+  /** Keep the render loop running even when idle (for benchmarking). */
+  keepAlive = false;
   /** Debug preview: show an internal texture instead of the normal composite. */
   debugPreview: string = 'none';
   private _mounted = false;
@@ -31,6 +33,9 @@ export class WebGPURenderer implements Renderer {
   private _queryResolveBuf?: GPUBuffer;
   private _queryResultBuf?: GPUBuffer;
   private _gpuTiming = false;
+  private _queryIdx = 0;
+  /** True while the GPU is still processing a submitted frame. */
+  private _frameInFlight = false;
 
   async mount(_container: HTMLElement, canvas: HTMLCanvasElement): Promise<void> {
     if (!canvas) throw new Error('Canvas element is null — mount called before DOM ready');
@@ -175,6 +180,11 @@ export class WebGPURenderer implements Renderer {
 
   setSSAOIntensity(v: number) { this.pipeline.ssaoIntensity = v; this.pipeline.writeSSAOParams(); this._startLoop(); }
 
+  setKeepAlive(v: boolean) {
+    this.keepAlive = v;
+    if (v) this._startLoop();
+  }
+
   setSSAORadius(v: number) { this.pipeline.ssaoRadius = v; this.pipeline.writeSSAOParams(); this._startLoop(); }
 
   setArcCurvature(v: number) {
@@ -249,6 +259,12 @@ export class WebGPURenderer implements Renderer {
 
   private _loop = () => {
     if (this.disposed) { this._loopActive = false; return; }
+    // Skip frame if GPU is still working on the previous one (avoids queuing
+    // frames faster than the GPU can consume them, which causes stalls).
+    if (this._frameInFlight) {
+      requestAnimationFrame(this._loop);
+      return;
+    }
     // Pause when page is hidden (background tab / locked mobile screen)
     if (document.hidden) {
       this._loopActive = false;
@@ -261,6 +277,7 @@ export class WebGPURenderer implements Renderer {
     }
     if (this._lastFrameTime > 0) {
       const dt = now - this._lastFrameTime;
+      this.stats.gpuMs.frameMs = dt;
       const isTimingFrame = this._debugFrames === 1 || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1);
       if (isTimingFrame) console.log(`frame interval: ${dt.toFixed(2)} ms (${(1000/dt).toFixed(1)} FPS)`);
     }
@@ -311,6 +328,9 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.dispatchCull(h);
 
     const encoder = this.device.createCommandEncoder();
+    // Acquire the swapchain texture early so the GPU has time to finish the
+    // previous frame while we encode the next one (avoids a stall later).
+    const _sv = this.context.getCurrentTexture().createView();
 
     // Shadow map render pass (always, regardless of SSAO)
     // Recompute shadow VPs each frame so changes to lightDir take effect
@@ -319,11 +339,19 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.renderShadowMap(encoder);
     this.pipeline.renderShadowMap2(encoder);
 
-    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 0); } catch(e) { this._gpuTiming = false; }
+    if (this._gpuTiming) {
+      this._queryIdx = 0;
+    }
 
     // Offscreen render pass (scene → offscreen color + depth32float)
     {
+      const tsWrite: GPURenderPassTimestampWrites | undefined = this._gpuTiming ? {
+        querySet: this._querySet!,
+        beginningOfPassWriteIndex: this._queryIdx++,
+        endOfPassWriteIndex: this._queryIdx++,
+      } : undefined;
       const offPass = encoder.beginRenderPass({
+        timestampWrites: tsWrite,
         colorAttachments: [
           {
             view: this.pipeline.offscreenColorTex.createView(),
@@ -350,30 +378,29 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.drawGround(offPass);
       offPass.end();
     }
-
     // Screen-space contact shadows (always, needs depth from offscreen pass)
     this.pipeline.renderContactShadow(encoder);
 
     // SSAO compute pass + blur (only when enabled)
     if (this.ssaoEnabled) {
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 1); } catch(e) {}
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchSSAO(encoder);
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 2); } catch(e) {}
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchBlur(encoder);
-      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 3); } catch(e) {}
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
     }
 
     // ── Velocity pass (screen-space motion) ──
     // Always compute velocity when TAA is enabled — needs depth from offscreen pass
     if (this.pipeline.taaEnabled) {
+      if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
       this.pipeline.dispatchVelocity(encoder);
     }
 
     // ── Present to swapchain ──
-    const sv = this.context.getCurrentTexture().createView();
     if (this.debugPreview !== 'none') {
       const swapPass = encoder.beginRenderPass({
-        colorAttachments: [{ view: sv, loadOp: 'clear', storeOp: 'store' }],
+        colorAttachments: [{ view: _sv, loadOp: 'clear', storeOp: 'store' }],
       });
       this.pipeline.renderDebugView(swapPass, this.debugPreview);
       swapPass.end();
@@ -390,12 +417,12 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.composite(compPass);
       compPass.end();
 
-      this.pipeline.dispatchTAA(encoder, sv);
+      this.pipeline.dispatchTAA(encoder, _sv);
     } else if (this.ssaoEnabled) {
       // Composite: offscreen color × occlusion → swapchain
       const swapPass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: sv,
+          view: _sv,
           clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
           loadOp: 'clear', storeOp: 'store',
         }],
@@ -406,7 +433,7 @@ export class WebGPURenderer implements Renderer {
       // Copy offscreen color → swapchain (no SSAO)
       const swapPass = encoder.beginRenderPass({
         colorAttachments: [{
-          view: sv,
+          view: _sv,
           clearValue: { r: 0.15, g: 0.15, b: 0.17, a: 1.0 },
           loadOp: 'clear', storeOp: 'store',
         }],
@@ -414,19 +441,23 @@ export class WebGPURenderer implements Renderer {
       this.pipeline.copyToSwapchain(swapPass);
       swapPass.end();
     }
-    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, 6); } catch(e) {}
+    if (this._gpuTiming) try { (encoder as any).writeTimestamp(this._querySet!, this._queryIdx++); } catch(e) {}
 
+    this._frameInFlight = true;
     this.device.queue.submit([encoder.finish()]);
+    this.device.queue.onSubmittedWorkDone?.().then(() => { this._frameInFlight = false; });
 
-    // Read back GPU timestamps on second frame after mount or after model load
-    const doTiming = this._debugFrames === 1 || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1);
+    // Read back GPU timestamps: on first frames after mount/model, and every ~1s when keepAlive is on.
+    const doTiming = this._debugFrames === 1
+      || (this._timingAfterLoad > 0 && this._debugFrames === this._timingAfterLoad + 1)
+      || (this.keepAlive && this._debugFrames % 60 === 0);
     if (this._gpuTiming && doTiming) {
       const qs = this._querySet!;
       const rb = this._queryResolveBuf!;
       const rb2 = this._queryResultBuf!;
       const re = this.device.createCommandEncoder();
-      re.resolveQuerySet(qs, 0, 7, rb, 0);
-      re.copyBufferToBuffer(rb, 0, rb2, 0, 7 * 8);
+      re.resolveQuerySet(qs, 0, this._queryIdx, rb, 0);
+      re.copyBufferToBuffer(rb, 0, rb2, 0, this._queryIdx * 8);
       this.device.queue.submit([re.finish()]);
       rb2.mapAsync(GPUMapMode.READ).then(() => {
         const arr = new BigInt64Array(rb2.getMappedRange());
@@ -434,7 +465,14 @@ export class WebGPURenderer implements Renderer {
         for (let i = 0; i < 5; i++) {
           if (arr[i] === 0n || arr[i+1] === 0n) continue;
           const ns = Number(arr[i+1] - arr[i]);
-          console.log(`  GPU [${labels[i]}→${labels[i+1]}]: ${(ns / 1e6).toFixed(3)} ms`);
+          const ms = ns / 1e6;
+          if (doTiming && this._debugFrames <= 120) {
+            console.log(`  GPU [${labels[i]}→${labels[i+1]}]: ${ms.toFixed(3)} ms`);
+          }
+          if (i === 0) this.stats.gpuMs.offscreen = ms;
+          else if (i === 1) this.stats.gpuMs.ssao = ms;
+          else if (i === 2) this.stats.gpuMs.blur = ms;
+          else if (i === 3) this.stats.gpuMs.velocity = ms;
         }
         rb2.unmap();
       });
@@ -472,15 +510,18 @@ export class WebGPURenderer implements Renderer {
 
     // Idle detection: if the camera hasn't moved for enough frames, stop rendering.
     // The camera's onInteraction callback restarts the loop on any user input.
-    const cam = this.camera;
-    const moved = cam.position[0] !== this._prevCamPos[0]
-               || cam.position[1] !== this._prevCamPos[1]
-               || cam.position[2] !== this._prevCamPos[2];
-    this._prevCamPos.set(cam.position);
-    if (moved) {
-      this._idleFrames = 0;
-    } else {
-      this._idleFrames++;
+    // When keepAlive is set (benchmark mode), the loop runs continuously.
+    if (!this.keepAlive) {
+      const cam = this.camera;
+      const moved = cam.position[0] !== this._prevCamPos[0]
+                 || cam.position[1] !== this._prevCamPos[1]
+                 || cam.position[2] !== this._prevCamPos[2];
+      this._prevCamPos.set(cam.position);
+      if (moved) {
+        this._idleFrames = 0;
+      } else {
+        this._idleFrames++;
+      }
     }
 
     if (this._idleFrames < this.IDLE_THRESHOLD) {

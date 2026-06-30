@@ -62,8 +62,10 @@ export function buildSegmentBuffers(
     }
 
     // Chain-start tangent
-    const startCap = (i === 0 || cc[i - 1] === 0) ? 1 : 0;
-    const endCap   = (i === count - 1 || cc[i] === 0) ? 1 : 0;
+    const chainedStart = i > 0 && (cc[i - 1] !== 0 || (isContinuous(g, i) && segmentsAligned(g, i)));
+    const chainedEnd   = i < count - 1 && (cc[i] !== 0 || (isContinuous(g, i + 1) && segmentsAligned(g, i + 1)));
+    const startCap = (i === 0 || !chainedStart) ? 1 : 0;
+    const endCap   = (i === count - 1 || !chainedEnd) ? 1 : 0;
 
     let ctx: number, cty: number, ctz: number;
     if (i > 0 && st[i - 1] === 1) {
@@ -108,8 +110,10 @@ export function buildSegmentBuffers(
   // ── Cap instance buffer ──
   let capCount = 0;
   for (let i = 0; i < count; i++) {
-    if (i === 0 || cc[i - 1] === 0) capCount++;
-    if (i === count - 1 || cc[i] === 0) capCount++;
+    const chainedStart = i > 0 && (cc[i - 1] !== 0 || (isContinuous(g, i) && segmentsAligned(g, i)));
+    const chainedEnd   = i < count - 1 && (cc[i] !== 0 || (isContinuous(g, i + 1) && segmentsAligned(g, i + 1)));
+    if (i === 0 || !chainedStart) capCount++;
+    if (i === count - 1 || !chainedEnd) capCount++;
   }
   const capBuf = device.createBuffer({
     size: capCount * 8,
@@ -119,10 +123,12 @@ export function buildSegmentBuffers(
   const capView = new Float32Array(capBuf.getMappedRange());
   let capN = 0;
   for (let i = 0; i < count; i++) {
-    if (i === 0 || cc[i - 1] === 0) {
+    const chainedStart = i > 0 && (cc[i - 1] !== 0 || (isContinuous(g, i) && segmentsAligned(g, i)));
+    const chainedEnd   = i < count - 1 && (cc[i] !== 0 || (isContinuous(g, i + 1) && segmentsAligned(g, i + 1)));
+    if (i === 0 || !chainedStart) {
       capView[capN * 2] = i; capView[capN * 2 + 1] = 0; capN++;
     }
-    if (i === count - 1 || cc[i] === 0) {
+    if (i === count - 1 || !chainedEnd) {
       capView[capN * 2] = i; capView[capN * 2 + 1] = 1; capN++;
     }
   }
@@ -136,4 +142,32 @@ function segDir(g: Float32Array, i: number): [number, number, number] {
   const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
   if (len < 0.001) return [0, 0, 1];
   return [dx / len, dy / len, dz / len];
+}
+
+/** Check if two consecutive segments are geometrically continuous (same endpoint). */
+function isContinuous(g: Float32Array, i: number): boolean {
+  // Compares seg[i-1].end with seg[i].start
+  const dx = g[(i - 1) * 8 + 3] - g[i * 8];
+  const dy = g[(i - 1) * 8 + 4] - g[i * 8 + 1];
+  const dz = g[(i - 1) * 8 + 5] - g[i * 8 + 2];
+  return (dx * dx + dy * dy + dz * dz) < 0.0001;
+}
+
+/** Check that two segments meeting at a point go in the same general direction (angle < 90°).
+ *  This prevents chaining loop-backs where path reverses direction at the same endpoint. */
+function segmentsAligned(g: Float32Array, i: number): boolean {
+  // seg[i-1] direction
+  const aDx = g[(i - 1) * 8 + 3] - g[(i - 1) * 8];
+  const aDy = g[(i - 1) * 8 + 4] - g[(i - 1) * 8 + 1];
+  const aDz = g[(i - 1) * 8 + 5] - g[(i - 1) * 8 + 2];
+  const aLen = Math.sqrt(aDx * aDx + aDy * aDy + aDz * aDz);
+  if (aLen < 0.001) return true;
+  // seg[i] direction
+  const bDx = g[i * 8 + 3] - g[i * 8];
+  const bDy = g[i * 8 + 4] - g[i * 8 + 1];
+  const bDz = g[i * 8 + 5] - g[i * 8 + 2];
+  const bLen = Math.sqrt(bDx * bDx + bDy * bDy + bDz * bDz);
+  if (bLen < 0.001) return true;
+  const dot = (aDx * bDx + aDy * bDy + aDz * bDz) / (aLen * bLen);
+  return dot > 0; // positive dot = same hemisphere
 }

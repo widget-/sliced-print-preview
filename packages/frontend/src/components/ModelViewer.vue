@@ -2,7 +2,10 @@
   <div ref="container" class="preview-container">
     <canvas ref="canvasEl" class="render-canvas" />
   </div>
-  <div class="stats-overlay" v-if="stats.show">FPS {{ stats.fps }}<br>tris {{ stats.triangles }}k</div>
+  <div class="stats-overlay" v-if="stats.show">FPS {{ stats.fps }}<br>tris {{ stats.triangles }}k
+    <br>GPU: {{ stats.gpuMs.offscreen > 0 ? fmtMs(stats.gpuMs.offscreen) : '--' }} · SSAO {{ stats.gpuMs.ssao > 0 ? fmtMs(stats.gpuMs.ssao) : '--' }} · blur {{ stats.gpuMs.blur > 0 ? fmtMs(stats.gpuMs.blur) : '--' }} · vel {{ stats.gpuMs.velocity > 0 ? fmtMs(stats.gpuMs.velocity) : '--' }} · frame {{ fmtMs(stats.gpuMs.frameMs) }}
+    <br><label class="keepalive-label"><input type="checkbox" v-model="keepAliveLocal" /> Keep alive</label>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -32,6 +35,7 @@ const props = withDefaults(defineProps<{
   /** Debug preview mode for WebGPU renderer. */
   debugPreview?: 'none' | 'depth' | 'occlusion' | 'color' | 'normal' | 'shadow' | 'shadow2' | 'velocity' | 'composite-taa' | 'blur-temp' | 'brdf-lut' | 'prefilter-up' | 'prefilter-fwd' | 'prefilter-down' | 'source-up' | 'source-fwd' | 'source-down' | 'worldpos';
   envMapUrl?: string;
+  keepAlive?: boolean;
 }>(), {
   roughness: 0.65,
   metalness: 0.0,
@@ -52,7 +56,17 @@ const props = withDefaults(defineProps<{
 });
 const emit = defineEmits<{ 'model-loaded': [ms: number] }>();
 
-const stats = ref({ show: false, fps: 0, triangles: 0 });
+const stats = ref<{ show: boolean; fps: number; triangles: number; gpuMs: { offscreen: number; ssao: number; blur: number; velocity: number; frameMs: number } }>({ show: true, fps: 0, triangles: 0, gpuMs: { offscreen: 0, ssao: 0, blur: 0, velocity: 0, frameMs: 0 } });
+
+/** Local copy of keepAlive so the checkbox is reactive even before the renderer exists. */
+const keepAliveLocal = ref(!!props.keepAlive);
+watch(keepAliveLocal, (v) => { if (renderer) renderer.setKeepAlive?.(v); });
+
+function fmtMs(ms: number): string {
+  if (ms < 0.1) return '<0.1';
+  if (ms < 10) return ms.toFixed(1);
+  return ms.toFixed(0);
+}
 
 let renderer: any = null;
 let statsTimer: any = null;
@@ -105,6 +119,10 @@ watch(() => props.envMapUrl, (url) => {
   if (renderer && typeof renderer.setEnvMap === 'function') {
     renderer.setEnvMap(url);
   }
+});
+
+watch(() => props.keepAlive, (v) => {
+  if (renderer) renderer.setKeepAlive?.(!!v);
 });
 
 // ── Resize ──
@@ -174,6 +192,7 @@ onMounted(async () => {
     // comprehensive setter as the watcher — sets key/fill light
     // intensity, shadow softness, SSAO params, etc.)
     onMaterialChange();
+    r.setKeepAlive?.(keepAliveLocal.value);
 
     if (props.segbinUrl) {
       const ms = await r.loadModel(props.segbinUrl);
@@ -232,5 +251,14 @@ onBeforeUnmount(() => {
   padding: 6px 8px;
   border-radius: 4px;
   pointer-events: none;
+}
+.stats-overlay .keepalive-label {
+  pointer-events: auto;
+  cursor: pointer;
+  color: #aaa;
+  font-size: 11px;
+}
+.stats-overlay .keepalive-label input {
+  vertical-align: middle;
 }
 </style>

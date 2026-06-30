@@ -120,6 +120,17 @@ fn run() -> Result<(), String> {
         eprintln!("  Arc subdivision: +{} segments at joints ({}ms)", arc_count, arc_ms.as_millis());
     }
 
+    // Insert arcs at width‑change boundaries so the vertex shader's
+    // chain‑width interpolation can smoothly handle the transition.
+    let wc_start = std::time::Instant::now();
+    let before_wc = parser.segments.len();
+    arcs::apply_width_change_arcs(&mut parser.segments, 3.0);
+    let wc_count = parser.segments.len() - before_wc;
+    let wc_ms = wc_start.elapsed();
+    if wc_count > 0 {
+        eprintln!("  Width‑change arcs: +{} segments ({}ms)", wc_count, wc_ms.as_millis());
+    }
+
     writer::write_segbin(output_path, &parser.segments)?;
     eprintln!("  Total: {}ms", started.elapsed().as_millis());
 
