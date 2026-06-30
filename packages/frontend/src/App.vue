@@ -48,19 +48,24 @@
         </table>
       </details>
       <div id="material-controls">
-        <h4>Render Settings</h4>
+        <h4>Material</h4>
         <SliderControl label="Roughness" v-model="roughness" :max="1" :step="0.01" />
         <SliderControl label="Metalness" v-model="metalness" :max="1" :step="0.01" />
         <SliderControl label="Env Intensity" v-model="envIntensity" :max="2" :step="0.01" />
-        <label>Environment</label>
+
+        <div class="controls-row">
+          <label class="checkbox-label">
+            <input type="checkbox" v-model="roleColors" /> Role Colors
+          </label>
+            <label :disabled="roleColors" >Color</label>
+            <input :disabled="roleColors" type="color" v-model="baseColorTint" class="color-picker" />
+        </div>
+        <h4>Environment</h4>
         <select v-model="envMapUrl" class="renderer-select">
           <option v-for="f in envMapFiles" :key="f" :value="f">{{ f.replace(/_/g, ' ').replace(/\.hdr$/, '') }}</option>
         </select>
         <SliderControl label="Specular" v-model="specularStrength" :max="1" :step="0.01" />
         <SliderControl label="Ambient" v-model="ambientStrength" :max="2" :step="0.01" />
-        <label class="checkbox-label">
-          <input type="checkbox" v-model="roleColors" /> Role Colors
-        </label>
         <h4>Lighting</h4>
         <SliderControl label="Key Light" v-model="keyLightIntensity" :max="3" :step="0.01" :decimals="1" />
         <SliderControl label="Fill Light" v-model="fillLightIntensity" :max="3" :step="0.01" :decimals="1" />
@@ -71,8 +76,6 @@
         <SliderControl label="SSAO Intensity" v-model="ssaoIntensity" :max="1" :step="0.01" />
         <SliderControl label="SSAO Radius" v-model="ssaoRadius" :min="0" :max="1" :step="0.01" :decimals="2" />
         <SliderControl label="Arc Curvature" v-model="arcCurvature" :min="0.1" :max="1" :step="0.01" :decimals="2" />
-        <label>Color</label>
-        <input type="color" v-model="baseColorTint" class="color-picker" />
         <label class="checkbox-label">
           <input type="checkbox" v-model="ssaoEnabled" /> SSAO
         </label>
@@ -427,11 +430,41 @@ body,
   cursor: pointer;
 }
 
+
+#material-controls {
+  display: flex;
+  flex-wrap: wrap;
+  flex-direction: row;
+  justify-content: space-between;
+  gap: 2px;
+}
+
+#material-controls h4 {
+  flex: 1 1 100%;
+  margin-top: 4px;
+  margin-bottom: 0;
+}
+
+#material-controls>.slider-control {
+  flex: 1 0 30%;
+  min-width: 150px;
+  max-width: 200px;
+}
+
 #material-controls label {
   display: block;
   margin-top: 4px;
   color: var(--app-text-secondary);
   font-size: 12px;
+}
+
+#material-controls .controls-row {
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-direction: row;
+  justify-content: space-around;
 }
 
 #material-controls .color-picker {
@@ -443,6 +476,11 @@ body,
   background: var(--app-input-bg);
   cursor: pointer;
   box-sizing: border-box;
+}
+
+#material-controls .color-picker:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .renderer-select {
@@ -575,24 +613,6 @@ body,
     height: 4px;
     border-radius: 2px;
     background: var(--app-border);
-  }
-
-  #material-controls {
-    display: flex;
-    flex-wrap: wrap;
-  }
-
-  #material-controls h4 {
-    width: 100%;
-    margin-top: 0;
-  }
-
-  #material-controls>label:not(.checkbox-label) {
-    flex: 0 0 48%;
-  }
-
-  #material-controls>input[type="range"] {
-    flex: 0 0 48%;
   }
 
   .builtin-buttons {

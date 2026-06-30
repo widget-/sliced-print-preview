@@ -136,10 +136,10 @@ function onMaterialChange() {
     envIntensity: props.envIntensity,
     specularStrength: props.specularStrength,
     ambientStrength: props.ambientStrength,
-    baseColorTint: props.baseColorTint,
+    baseColorTint: props.roleColors ? "#ffffff" : props.baseColorTint,
     ssaoIntensity: props.ssaoIntensity,
     ssaoRadius: props.ssaoRadius,
-    arcCurvature: props.arcCurvature,
+    arcCurvature: props.arcCurvature
   });
   renderer.setSSAOIntensity?.(props.ssaoIntensity);
   renderer.setSSAORadius?.(props.ssaoRadius);
@@ -303,18 +303,21 @@ onBeforeUnmount(() => {
   border: 5px solid transparent;
   pointer-events: none;
 }
+
 .stats-overlay summary {
   cursor: pointer;
   user-select: none;
   padding: 2px 8px;
   pointer-events: auto;
 }
+
 .stats-overlay table {
   border-collapse: collapse;
   margin: 0;
   padding: 0;
   pointer-events: none;
 }
+
 .stats-overlay td:nth-child(2) {
   color: #acf;
 }
