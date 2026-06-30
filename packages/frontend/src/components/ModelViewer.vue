@@ -165,15 +165,10 @@ onMounted(async () => {
       }
     }, 200);
 
-    // Apply initial material settings
-    r.setMaterial({
-      roughness: props.roughness,
-      metalness: props.metalness,
-      envIntensity: props.envIntensity,
-      specularStrength: props.specularStrength,
-      ambientStrength: props.ambientStrength,
-      baseColorTint: props.baseColorTint,
-    });
+    // Apply initial material & lighting settings (uses the same
+    // comprehensive setter as the watcher — sets key/fill light
+    // intensity, shadow softness, SSAO params, etc.)
+    onMaterialChange();
 
     if (props.segbinUrl) {
       const ms = await r.loadModel(props.segbinUrl);
