@@ -25,6 +25,7 @@ struct Material {
   envIntensity: f32,
   specularStrength: f32,
   ambientStrength: f32,
+  arcCurvature: f32,
   baseColorTint: vec3<f32>,
   useRoleColors: f32,
 };

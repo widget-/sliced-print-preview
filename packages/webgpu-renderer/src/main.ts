@@ -153,6 +153,7 @@ export class WebGPURenderer implements Renderer {
     this.pipeline.material.envIntensity = props.envIntensity;
     this.pipeline.material.specularStrength = props.specularStrength;
     this.pipeline.material.ambientStrength = props.ambientStrength;
+    if (props.arcCurvature !== undefined) this.pipeline.material.arcCurvature = props.arcCurvature;
     this.pipeline.material.baseColorTint = [
       parseInt(props.baseColorTint.slice(1, 3), 16) / 255,
       parseInt(props.baseColorTint.slice(3, 5), 16) / 255,
@@ -176,9 +177,11 @@ export class WebGPURenderer implements Renderer {
 
   setSSAORadius(v: number) { this.pipeline.ssaoRadius = v; this.pipeline.writeSSAOParams(); this._startLoop(); }
 
-  setArcCurvature(_v: number) {
-    // Arc curvature is a PlayCanvas-specific feature (conic fillets).
-    // WebGPU renderer handles arcs differently; this is a no-op.
+  setArcCurvature(v: number) {
+    this.pipeline.material.arcCurvature = v;
+    this.pipeline.writeMaterialUBO();
+    this.pipeline.writeArcCurvature();
+    this._startLoop();
   }
 
   async setEnvMap(url: string): Promise<void> {

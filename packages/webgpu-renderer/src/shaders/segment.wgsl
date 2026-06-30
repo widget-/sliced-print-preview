@@ -31,7 +31,7 @@ fn vs_main(in: VertexInput, @builtin(instance_index) ii: u32) -> VertexOutput {
     let p0 = data.startPos.xyz;
     let p1 = data.endPos.xyz;
     let p2 = segments[ii + 1u].startPos.xyz;
-    let w  = data.endPos.w;
+    let w  = data.endPos.w * material.arcCurvature;
     let mt = 1.0 - t;
     let mt2 = mt * mt;
     let t2 = t * t;

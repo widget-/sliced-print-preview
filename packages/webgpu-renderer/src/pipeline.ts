@@ -22,6 +22,7 @@ const SHADER_SRC = typesWgsl + segmentWgsl + capWgsl + pbrWgsl;
 export interface MaterialUniforms {
   roughness: number; metalness: number; envIntensity: number;
   specularStrength: number; ambientStrength: number;
+  arcCurvature: number;
   baseColorTint: [number, number, number];
   useRoleColors?: number;
 }
@@ -170,12 +171,14 @@ export class SlicedPipeline {
   material: MaterialUniforms = {
     roughness: 0.65, metalness: 0, envIntensity: 1.0,
     specularStrength: 1, ambientStrength: 0.5,
+    arcCurvature: 1,
     baseColorTint: [1, 0.878, 0.831],
     useRoleColors: 1,
   };
   lightDir: [number, number, number, number] = [0.416, -0.25, 0.872, 1];
   lightDir2: [number, number, number, number] = [-0.5, -0.3, 0.6, 0.4];
   lightDir2Buf!: GPUBuffer;
+  arcCurvatureBuf!: GPUBuffer;
   /** Shadow PCF kernel radius multiplier (1=1 texel, 2=2 texels, etc). */
   shadowSoftness = 2.0;
   /** Contact shadow ray max distance in world units. */
@@ -238,6 +241,8 @@ export class SlicedPipeline {
     this.materialBuf = d.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.lightDirBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.lightDir2Buf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.arcCurvatureBuf = d.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    d.queue.writeBuffer(this.arcCurvatureBuf, 0, new Float32Array([this.material.arcCurvature, 0, 0, 0]));
     this.writeMaterialUBO(); this.writeLightDirUBO(); this.writeLightDir2UBO();
 
     // ── Culling buffers ──
@@ -359,6 +364,7 @@ export class SlicedPipeline {
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'uniform' } },
       ],
     });
     // Shadow render BGL (used at group 1 of main render pass)
@@ -748,6 +754,7 @@ export class SlicedPipeline {
       entries: [
         { binding: 0, resource: { buffer: this.shadowVPBuf } },
         { binding: 1, resource: { buffer: buffers.segmentBuffer } },
+        { binding: 2, resource: { buffer: this.arcCurvatureBuf } },
       ],
     });
     // Second shadow (group 3): depth texture + sampler + VP + lightDir2
@@ -766,6 +773,7 @@ export class SlicedPipeline {
       entries: [
         { binding: 0, resource: { buffer: this.shadowVPBuf2 } },
         { binding: 1, resource: { buffer: buffers.segmentBuffer } },
+        { binding: 2, resource: { buffer: this.arcCurvatureBuf } },
       ],
     });
   }
@@ -845,12 +853,13 @@ export class SlicedPipeline {
     const m = this.material;
     this.device.queue.writeBuffer(this.materialBuf, 0, new Float32Array([
       m.roughness, m.metalness, m.envIntensity, m.specularStrength, m.ambientStrength,
-      0, 0, 0,
+      m.arcCurvature ?? 1, 0, 0,
       m.baseColorTint[0], m.baseColorTint[1], m.baseColorTint[2], m.useRoleColors ?? 1,
     ]));
   }
   writeLightDirUBO() { this.device.queue.writeBuffer(this.lightDirBuf, 0, new Float32Array(this.lightDir)); }
   writeLightDir2UBO() { this.device.queue.writeBuffer(this.lightDir2Buf, 0, new Float32Array(this.lightDir2)); }
+  writeArcCurvature() { this.device.queue.writeBuffer(this.arcCurvatureBuf, 0, new Float32Array([this.material.arcCurvature, 0, 0, 0])); }
   writeShadowSoftness() { this.device.queue.writeBuffer(this.shadowParamsBuf, 0, new Float32Array([this.shadowSoftness, 0, 0, 0])); }
 
   /** Store model bounding box for shadow VP recomputation. */
@@ -1409,5 +1418,6 @@ export class SlicedPipeline {
     this.shadowVPBuf2?.destroy();
     this.contactShadowBuf?.destroy();
     this.lightDir2Buf?.destroy();
+    this.arcCurvatureBuf?.destroy();
   }
 }
