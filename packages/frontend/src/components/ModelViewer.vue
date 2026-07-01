@@ -136,10 +136,13 @@ function onMaterialChange() {
     envIntensity: props.envIntensity,
     specularStrength: props.specularStrength,
     ambientStrength: props.ambientStrength,
+    // When role colors are ON, set baseColorTint to white so segColor
+    // passes through unmodified. When OFF, use the color picker value.
     baseColorTint: props.roleColors ? "#ffffff" : props.baseColorTint,
     ssaoIntensity: props.ssaoIntensity,
     ssaoRadius: props.ssaoRadius,
-    arcCurvature: props.arcCurvature
+    arcCurvature: props.arcCurvature,
+    useRoleColors: props.roleColors ? 1 : 0,
   });
   renderer.setSSAOIntensity?.(props.ssaoIntensity);
   renderer.setSSAORadius?.(props.ssaoRadius);

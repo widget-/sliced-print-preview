@@ -8,6 +8,7 @@ export interface MaterialProps {
   ssaoIntensity?: number;
   ssaoRadius?: number;
   arcCurvature?: number;
+  useRoleColors?: number;
 }
 
 export interface ScreenshotHooks {

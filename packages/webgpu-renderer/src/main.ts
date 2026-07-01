@@ -163,6 +163,7 @@ export class WebGPURenderer implements Renderer {
       parseInt(props.baseColorTint.slice(3, 5), 16) / 255,
       parseInt(props.baseColorTint.slice(5, 7), 16) / 255,
     ];
+    if (props.useRoleColors !== undefined) this.pipeline.material.useRoleColors = props.useRoleColors;
     this.pipeline.writeMaterialUBO();
     this._startLoop();
   }
